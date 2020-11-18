@@ -162,6 +162,8 @@ class SpatialZone:            # {{{
          
       """
 
+      self.truncateToZone = truncateToZone
+
       if not size and not start and not end and not asString:
          mx = sys.float_info.max
          mn = sys.float_info.min
@@ -216,7 +218,6 @@ class SpatialZone:            # {{{
          if c2 < c1:
             raise Exception("Bad coordinates specified for this zone.")
 
-      self.truncateToZone = truncateToZone
 
    def expandBoundingBox(self, other):
       self.c = (
