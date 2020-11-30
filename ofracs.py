@@ -892,9 +892,9 @@ class OFracGrid():
 
 
     def merge(self,
-            *others:"iterable of OFracGrid objects"
+            *others:"other OFracGrid objects"
         ):
-        """Merge these two and return a new OFracGrid"""
+        """Merge this with these others and return a new OFracGrid"""
 
 
         if __VERBOSITY__ > 2:
