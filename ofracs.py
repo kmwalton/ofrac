@@ -568,7 +568,7 @@ class OFracGrid():
 
         for i,f in enumerate(self._fx):
             try:
-                f.truncate(self.domainOrigin, self.domainSize)
+                f.truncate(s, e)
             except (FractureCollapseError,FractureCollapseWarning) as ce:
                 # capture a string listing which fractures were truncated
                 if nTruncMsgs == 0:
