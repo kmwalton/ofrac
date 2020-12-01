@@ -7,7 +7,8 @@ Licenced under GNU GPLv3
 Documentation intended to work with pdoc3.
 """
 
-import argparse,sys,re,copy,traceback,glob
+import argparse,sys,os,re,copy,traceback,glob,datetime
+from itertools import count,accumulate
 from decimal import Decimal
 from bisect import bisect
 from math import log10
@@ -61,9 +62,10 @@ class Binner:
         # store an empty OFracGrid
         self.grid = OFracGrid()
 
+        self.datafns = []
 
         # process all input files to make an aggregate fracture network
-        for fnin in args.FILES:
+        for fnin in files:
            if __VERBOSITY__:
               print( "========= %s ========="%(fnin))
 
@@ -94,45 +96,86 @@ class Binner:
               raise NotValidOFracGridError('Could not parse input file "{}":\n{}\n'.format(fnin,errmsg))
            
            else:
+              self.datafns.append( os.path.basename(fnin) )
               self.grid = self.grid.merge(fxNet)
+
+        #
+        # do the statistics
+        #
+
+        # frequencies
+        self.freq = (len(self.bins)+1)*[0,]
+        for f in self.grid.iterFracs():
+            self.freq[ bisect(self.bins, f.ap) ] += 1
+
+
+        # descriptive statistics
+        aps = np.fromiter(map( lambda f: f.ap, self.grid.iterFracs()), dtype=np.float_)
+        (N,(apMin,apMax),mean,variance,skewness,kurtosis) = describe(aps)
+
+        self.descStats = {
+                'N':N,
+                'Arithmetic mean':mean,
+                'Geometric mean':gmean(aps),
+                'Variance':variance,
+                'Skewness':skewness }
+
+        # cumulative density function
+        self.cdf = list( v/N for v in accumulate(self.freq) )
+
+    def printTecplot(self, fout):
+        stdoutSave = sys.stdout
+        sys.stdout = fout
+
+        print(f'# {os.path.realpath(__file__)} on {datetime.datetime.now()}')
+        print(f'VARIABLES="Bin [um]","Frequency","CDF"')
+        print(f'''ZONE T="{','.join(self.datafns)}" I={len(self.bins)+1}''')
+
+        # nice values for the descStats
+        print(f'AUXDATA N="{self.descStats["N"]}"')
+        print(f'AUXDATA ARITHMETRICMEAN="{self.descStats["Arithmetic mean"]*1e6:.0f}"')
+        print(f'AUXDATA GEOMETRICMEAN="{self.descStats["Geometric mean"]*1e6:.0f}"')
+        print(f'AUXDATA VARIANCE="{self.descStats["Variance"]:.4g}"')
+        print(f'AUXDATA SKEWNESS="{self.descStats["Skewness"]:.4g}"')
+
+        for i,f,c in zip(count(1), self.freq, self.cdf):
+            print(f'{i} {f:10d} {c:10.5f}')
+
+        conv = Decimal('1e6') # convert to microns
+        binsMicrons = list(map( lambda v: v*conv, self.bins ) )
+        foo='", "'.join(
+                f'{a!s}-{b!s}' for (a,b) in
+                    zip([0,]+binsMicrons[:-1], binsMicrons) )
+        foo += f'", ">{binsMicrons[-1]}'
+        print(f'CUSTOMLABELS "{foo}"')
+
+
+        sys.stdout = stdoutSave
 
     def makeBinningReport(self):
 
         conv = Decimal('1e6') # convert to microns
-
-        bins = (len(self.bins)+1)*[0,]
         printBins = list(map( lambda v: v*conv, self.bins ) )
-
-        for f in self.grid.iterFracs():
-            bins[ bisect(self.bins, f.ap) ] += 1
-
 
         width = 2+int(6+log10(float(self.bins[-1])))
 
-        rpt = '{:>{w}} - {!s:>{w}}: {}\n'.format('0',printBins[0], bins[0],w=width)
+        rpt = '{:>{w}} - {!s:>{w}}: {}\n'.format('0',printBins[0], self.freq[0],w=width)
 
-        for i,bc in enumerate(bins[1:-1]):
-            #rpt = '{:w} - {:w} : {}'.format('>'+str(self.bins[-,self.bins[0], bins[0])
+        for i,bc in enumerate(self.freq[1:-1]):
             rpt += '{:>{w}} - {!s:>{w}}: {}\n'.format(
                 f'>{printBins[i]!s}', printBins[i+1], bc, w=width)
 
         rpt += '{:>{w}} - {!s:>{w}}: {}\n'.format(
-            f'>{printBins[-1]!s}', '', bins[-1], w=width)
+            f'>{printBins[-1]!s}', '', self.freq[-1], w=width)
 
         return rpt
 
 
     def makeDescStats(self):
         aps = np.fromiter(map( lambda f: f.ap, self.grid.iterFracs()), dtype=np.float_)
-
         (N,(apMin,apMax),mean,variance,skewness,kurtosis) = describe(aps)
 
-        s = ''
-        s += f'N               = {N}\n'
-        s += f'Arithmetic mean = {mean}\n'
-        s += f'Geometric mean  = {gmean(aps)}\n'
-        s += f'Variance        = {variance}\n'
-        s += f'Skewness        = {skewness}\n'
+        s = '\n'.join( f'{k:15} = {v!s}' for (k,v) in self.descStats.items() )
         return s
 
 
@@ -153,9 +196,15 @@ if __name__ == '__main__':
             action='count',
             help="Increase the verbosity of this operation with increasing '-vvv's or integer parameter value")
 
+    parser.add_argument( '--tecplot-out',
+            nargs='?',
+            default=None,
+            help="Filename (or stdout, default if blank or '-') for Tecplot-formatted output")
+
     parser.add_argument( 'FILES',
             nargs='+',
             help='fracture network input files (or fractran prefix)' )
+
 
     # TODO add sample/sub-sample zones, per ofracstats-pcalc
 
@@ -169,5 +218,14 @@ if __name__ == '__main__':
         print(str(e), file=sys.stderr)
         sys.exit(-1)
 
+
     print(b.makeBinningReport())
     print(b.makeDescStats())
+
+    if args.tecplot_out == None:
+        pass
+    elif args.tecplot_out == '' or args.tecplot_out == '-':
+        b.printTecplot(sys.stdout)
+    else:
+        with open(args.tecplot_out,'w') as fout:
+            b.printTecplot(fout)
