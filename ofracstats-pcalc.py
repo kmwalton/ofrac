@@ -63,7 +63,7 @@ from random import random
 from random import uniform
 from math import log10
 from collections import deque
-from itertools import chain
+from itertools import chain,product
 
 #from parser_fractran import *
 #from parser_rfgen import *
@@ -162,8 +162,6 @@ class SpatialZone:            # {{{
          
       """
 
-      self.truncateToZone = truncateToZone
-
       if not size and not start and not end and not asString:
          mx = sys.float_info.max
          mn = sys.float_info.min
@@ -218,6 +216,7 @@ class SpatialZone:            # {{{
          if c2 < c1:
             raise Exception("Bad coordinates specified for this zone.")
 
+      self.truncateToZone = truncateToZone
 
    def expandBoundingBox(self, other):
       self.c = (
@@ -346,7 +345,7 @@ class FractureZone:                                         #{{{
       if c > 0:
          p01 = l / float(c)
       return \
-         "P10-{0:2s}: {1:12.3f} /m spacing-{0:} {2:12.3f} m (count={3:4d}, d={4:4.1f}m)".format(
+         "P10-{0:2s}: {1:12.3f} /m  spacing-{0:} {2:12.3f} m (count={3:4d}, d={4:4.1f}m)".format(
              d, p10, p01, c, l )
 
    def lengths(self):
@@ -357,7 +356,7 @@ class FractureZone:                                         #{{{
       for f in self.fracs:
 
          # if the truncate flag is set, truncate as necessary.
-         if self.zn.truncateToZone:
+         if hasattr(self.zn,'truncateToZone') and self.zn.truncateToZone:
             fobj = OFrac(*f[0])
             fobj.truncate(self.zn.start(), self.zn.end())
             f = ofrac2ftuple(fobj)
@@ -473,7 +472,7 @@ class FractureZone:                                         #{{{
       if self.zn.size( DIR[PERP[d][0]] ) == 0.0 or self.zn.size( DIR[PERP[d][1]] ) == 0.0:
          return ''
 
-      return "P22-{:2s}: {:12.6f}    (count={:6d}, A={:4.1f}m^2)".format( PERP[d], p22, c, a )
+      return "P22-{:2s}: {:12.6f}     (count={:6d}, A={:4.1f}m^2)".format( PERP[d], p22, c, a )
 
    def P30(self):
       if self.zn.vol() == 0:
@@ -622,6 +621,27 @@ def doEverything(args, batchDir=''):
        sampleZn = [ dom ]
 
 
+    results = []
+    """
+        List of tuples for each sample zone, which are resluts of
+            calcAndCalcFormatter( formatter, function, direciton string )
+    """
+    with multiprocessing.Pool(args.max_cpus) as pool:
+
+        for (izn, zn) in enumerate(sampleZn):
+
+           fzn = FractureZone(zn,fracs)
+           fzn.setNScan(args.n)
+
+           results.append( pool.map( calcAndCalcFormatter, chain(
+                  [(fzn.formatP10, fzn.P10, d,) for d in sorted(DIR)],
+                  [(fzn.formatP20, fzn.P20, d,) for d in sorted(DIR)],
+                  [(fzn.formatP22, fzn.P22, d,) for d in sorted(DIR)],
+                  [(fzn.formatP30, fzn.P30, None,),
+                   (fzn.formatP33, fzn.P33, None,),]
+                 )
+              ))
+
 
     # get ready for batch printing
     header="""
@@ -655,35 +675,45 @@ Sample Zones:
        print( "========= stats for fracture network sub-zones =========" )
 
     
-    with multiprocessing.Pool(args.max_cpus) as pool:
 
-        for (izn, zn) in enumerate(sampleZn):
 
-           fzn = FractureZone(zn,fracs)
-           fzn.setNScan(args.n)
 
-           results = pool.map( calcAndCalcFormatter, chain(
-                  [(fzn.formatP10, fzn.P10, d,) for d in sorted(DIR)],
-                  [(fzn.formatP20, fzn.P20, d,) for d in sorted(DIR)],
-                  [(fzn.formatP22, fzn.P22, d,) for d in sorted(DIR)],
-                  [(fzn.formatP30, fzn.P30, None,),
-                   (fzn.formatP33, fzn.P33, None,),]
-                 )
-              )
+
+
+
+    # get ready for tecplot printing
+    tecout = '''VARIABLES="X","Y","Z"\n'''
+
+    for (izn, zn) in enumerate(sampleZn):
+
+       r = results[izn]
 
            if args.batch_dir:
                 if batchDir == args.batch_dir[0]:
                     print(header)
                 print(rowFmt.format(batchDir, izn,
                                # pick out just the P10s
-                               results[0][0][1],
-                               results[1][0][1],
-                               results[2][0][1],) )
+                           r[0][0][1],
+                           r[1][0][1],
+                           r[2][0][1],) )
 
            else:
                 print( "--- {} ---".format(str(zn) ) )
                 # print results
-                print('\n'.join( map(lambda v:v[1](v[0]), results)))
+           print('\n'.join( map(lambda v:v[1](v[0]), r)))
+
+
+           # zone header
+           tecout += f'''ZONE T="{zn!s}" ZONETYPE=ORDERED I=2 J=2 K=2 DATAPACKING=POINT\n'''
+           # Auxvar
+           for i,d in enumerate(sorted(DIR)):
+               tecout += f'''AUXDATA P10{d}="{r[i][0][1]:.3f}"\n'''
+
+           #import pdb ; pdb.set_trace()
+           tecout += f'''AUXDATA P33="{r[10][0]:.3g}"\n'''
+
+
+
 
                 # length stats ... P21???
                 lengths = fzn.lengths()
@@ -695,7 +725,18 @@ Sample Zones:
                    else:
                       print( "%s-length:         (count=%4d)" % (os, 0) )
 
+           #ZONE data
+           #import pdb ; pdb.set_trace()
+           #for d,(l,h) in zip(DIR,zn.c):
+           #    tecout += '''# {}\n {:11.3f} {:11.3f}\n'''.format(d,l,h)
+           for z,y,x in product(*reversed(zn.c)):
+               tecout += '''{:11.3f} {:11.3f} {:11.3f}\n'''.format(x,y,z)
 
+    if 'tp_out' in args and args.tp_out: # not None or ''
+        if __VERBOSITY__:
+            print(f'==== Writing tecplot file {args.tp_out} ====')
+        with open(args.tp_out,'w') as fout:
+            fout.write(tecout)
 
 
 
@@ -759,6 +800,9 @@ if __name__ == '__main__':
           table format.
           IN DEVELOPMENT: Only the P10 values are printed
           """)
+
+    parser.add_argument( '--tp-out', type=str,
+          help='Name of the tecplot file to write to.' )
 
     # command line args
     args = parser.parse_args()
