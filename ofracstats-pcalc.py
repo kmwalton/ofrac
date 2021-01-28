@@ -704,7 +704,7 @@ Sample Zones:
 
 
            # zone header
-           tecout += f'''ZONE T="{zn!s}" ZONETYPE=ORDERED I=2 J=2 K=2 DATAPACKING=POINT\n'''
+           tecout += f'''ZONE T="{zn!s}" ZONETYPE=ORDERED I=2 J=2 K=2 DATAPACKING=BLOCK\n'''
            # Auxvar
            for i,d in enumerate(sorted(DIR)):
                tecout += f'''AUXDATA P10{d}="{r[i][0][1]:.3f}"\n'''
@@ -727,10 +727,12 @@ Sample Zones:
 
            #ZONE data
            #import pdb ; pdb.set_trace()
-           #for d,(l,h) in zip(DIR,zn.c):
-           #    tecout += '''# {}\n {:11.3f} {:11.3f}\n'''.format(d,l,h)
+           coordBlks = [ '', '', '', ]
            for z,y,x in product(*reversed(zn.c)):
-               tecout += '''{:11.3f} {:11.3f} {:11.3f}\n'''.format(x,y,z)
+               coordBlks[0] += f' {x:11.3f}'
+               coordBlks[1] += f' {y:11.3f}'
+               coordBlks[2] += f' {z:11.3f}'
+           tecout += ''.join(f'# {d}\n{v[1:]}\n' for d,v in zip('xyz',coordBlks))
 
     if 'tp_out' in args and args.tp_out: # not None or ''
         if __VERBOSITY__:
