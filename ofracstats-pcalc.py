@@ -311,11 +311,11 @@ class FractureZone:                                         #{{{
 
       for ci in range(nScanLine):
          (c1,c2) = ( uniform(*self.zn.r(d1)), uniform(*self.zn.r(d2)) )
-         count = len(list(filter( 
+         count = sum( 1 for i in filter( 
             lambda fd: fd[1]==o \
                and fd[0][od1ind] <= c1 and c1 < fd[0][od1ind+1] \
                and fd[0][od2ind] <= c2 and c2 < fd[0][od2ind+1],\
-            self.fracs )))
+            self.fracs ))
 
          if __VERBOSITY__ > 1:
             cMag = max( len("{:.3f}".format(s)) for s in chain(*self.zn.c) ) + 1
