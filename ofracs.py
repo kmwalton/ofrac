@@ -44,7 +44,7 @@ def D_AP(v):
 DINF = Decimal('infinity')
 
 def toDTuple(someString):
-    """return a tuple of Decimals from come coordinate-like or list-like string"""
+    """return a tuple of Decimals from some coordinate-like or list-like string"""
     return tuple( D_CO(v) for v in re.sub("[(),]",' ',someString).split() )
 
 def numTuple2str( somedt, sep=',', start='(', end=')' ):
@@ -83,6 +83,13 @@ class NotValidOFracGridError(Exception):
         self.message = message
 
 
+__FX_COLLAPSE_POLICIES__ = ['fail', 'warn-omit', 'omit', 'ignore',]
+"""Policies useful when nudging fractures.
+These determine whether a failure, warning, or nothing will happen when a
+collapse occurs.
+"""
+__FX_COLLAPSE_POLICY__ = __FX_COLLAPSE_POLICIES__[0]
+"""The Policy in use. Default 'fail'"""
 
 
 
@@ -185,13 +192,26 @@ class OFrac():
         
         newd = tuple( map( n, self.d ) )
 
+        try:
         self._checkCollapse("nudging", newd)
 
+        except FractureCollapseWarning as e:
+            if __FX_COLLAPSE_POLICY__ == 'fail':
+                raise
+            elif __FX_COLLAPSE_POLICY__ == 'warn-omit':
+                print(e, file=sys.stderr)
+                returnstatus = False
+            elif __FX_COLLAPSE_POLICY__ == 'omit':
+                returnstatus = False
+
+        else:
         self.d = newd
 
         # invalidate the gridlines in the containing network
         if self.myNet is not None:
             self.myNet.invalidateGrid()
+
+        return returnstatus
 
     def truncate(self, s, e):
         """Modify a fracture's size to fit within a given bounding box
@@ -639,8 +659,13 @@ class OFracGrid():
             yield f
 
     def nudgeAll( self, nudgeTo ):
+        """Removes fractures or fails depending on __FX_COLLAPSE_POLICY__"""
+        failedNudges = []
         for i,of in enumerate(self._fx):
-            self._fx[i].nudge( nudgeTo )
+            if not self._fx[i].nudge( nudgeTo ): failedNudges.append(i)
+
+        for i in reversed(failedNudges):
+            del self._fx[i]
 
     def getFxCount(self):
         return len(self._fx)
