@@ -642,21 +642,38 @@ def doEverything(args, batchDir=''):
         List of tuples for each sample zone, which are resluts of
             calcAndCalcFormatter( formatter, function, direciton string )
     """
-    with multiprocessing.Pool(args.max_cpus) as pool:
 
+    if args.max_cpus == 1:
         for (izn, zn) in enumerate(sampleZn):
 
-           fzn = FractureZone(zn,fracs)
-           fzn.setNScan(args.n)
+            fzn = FractureZone(zn,fracs)
+            fzn.setNScan(args.n)
 
-           results.append( pool.map( calcAndCalcFormatter, chain(
-                  [(fzn.formatP10, fzn.P10, d,) for d in sorted(DIR)],
-                  [(fzn.formatP20, fzn.P20, d,) for d in sorted(DIR)],
-                  [(fzn.formatP22, fzn.P22, d,) for d in sorted(DIR)],
-                  [(fzn.formatP30, fzn.P30, None,),
-                   (fzn.formatP33, fzn.P33, None,),]
-                 )
-              ))
+            results.append( list( map( calcAndCalcFormatter, chain(
+                    [(fzn.formatP10, fzn.P10, d,) for d in sorted(DIR)],
+                    [(fzn.formatP20, fzn.P20, d,) for d in sorted(DIR)],
+                    [(fzn.formatP22, fzn.P22, d,) for d in sorted(DIR)],
+                    [(fzn.formatP30, fzn.P30, None,),
+                    (fzn.formatP33, fzn.P33, None,),]
+                    )
+                )))
+
+    else:
+        with multiprocessing.Pool(args.max_cpus) as pool:
+
+            for (izn, zn) in enumerate(sampleZn):
+
+               fzn = FractureZone(zn,fracs)
+               fzn.setNScan(args.n)
+
+               results.append( pool.map( calcAndCalcFormatter, chain(
+                      [(fzn.formatP10, fzn.P10, d,) for d in sorted(DIR)],
+                      [(fzn.formatP20, fzn.P20, d,) for d in sorted(DIR)],
+                      [(fzn.formatP22, fzn.P22, d,) for d in sorted(DIR)],
+                      [(fzn.formatP30, fzn.P30, None,),
+                       (fzn.formatP33, fzn.P33, None,),]
+                     )
+                  ))
 
 
     # get ready for batch printing
@@ -826,6 +843,10 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     __VERBOSITY__ = args.verbose
+
+    if args.max_cpus > 1 and args.verbose > 0:
+        print(f'Verbosity level {args.verbose} selected. Resetting --max-cpus from {args.max_cpus} to 1.')
+        args.max_cpus = 1
 
     if args.batch_dir:
         __VERBOSITY__ = 0
