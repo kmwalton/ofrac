@@ -438,8 +438,14 @@ class OFracGrid():
             self._mima[i][1] = max(self._mima[i][1], fx.d[2*i+1])
 
     def _remakeMinMax(self, **kwargs) :
-        #useFixedGrid=False, useGrid=False, useFx=False):
-        """use the given data source(s) to reset _mima values"""
+        """Use the given data source(s) to reset _mima values
+
+
+            Keyword arguments:
+                useFixedGrid : bool
+                useGrid : bool
+                useFx : bool
+        """
 
         if 'useFixedGrid' in kwargs and kwargs['useFixedGrid']:
             for a,gla in enumerate(self._fixedgl):
