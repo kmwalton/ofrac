@@ -306,8 +306,6 @@ class FractureZone:                                         #{{{
       m = self.zn.size(d0)
       (cc,cm) = (0,0.0)
 
-      if __VERBOSITY__ > 1:
-         print('\nP10-{} for scanline at:'.format(d))
 
       for ci in range(nScanLine):
          (c1,c2) = ( uniform(*self.zn.r(d1)), uniform(*self.zn.r(d2)) )
@@ -318,13 +316,31 @@ class FractureZone:                                         #{{{
             self.fracs ))
 
          if __VERBOSITY__ > 1:
+
+             s = 'P10-{} for scanline at ({},{})=({:.3f},{:.3f})'.format(
+                     dScanLine,
+                     PERP[dScanLine][0], PERP[dScanLine][1],
+                     c1, c2,
+                 )
+ 
             cMag = max( len("{:.3f}".format(s)) for s in chain(*self.zn.c) ) + 1
 
             dens = float(count)/m
             spac = float('inf')
             if count > 0: spac = 1.0/dens
-            print( "     {}=({:{w}.3f},{:{w}.3f}): {:6.3g}/m {:6.3g}m (count={})".format(
-                     PERP[d], c1, c2, dens, spac, count, w=cMag ) )
+             print( "{}: {:6.3g}/m {:6.3g}m (count={})".format(
+                      s, dens, spac, count, w=cMag ) )
+ 
+             if __VERBOSITY__ > 2:
+                 s = 'Fractures found:\n'
+                 w = int(log10(len(self.fracs)))
+                 for iff,ff in enumerate(filter( 
+                     lambda fd: fd[1]==o \
+                       and fd[0][od1ind] <= c1 and c1 < fd[0][od1ind+1] \
+                       and fd[0][od2ind] <= c2 and c2 < fd[0][od2ind+1],\
+                     self.fracs), start=1):
+                        s += f'{iff:{w}}: {ff}\n'
+                 print(s)
 
          cc += count
          cm += m
