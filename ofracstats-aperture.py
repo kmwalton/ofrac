@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Groups fractures in bins based on orientation and aperture and reports
 count of fractures per bin (frequency)
 
@@ -50,12 +50,19 @@ __VERBOSITY__ = 0
 
 
 class Binner:
+    """Produce statistics of fracture apertures.
+    """
 
 
-    """
-    bins - list of strings representing aperture values in units microns
-    """
     def __init__(self, files, bins):
+    """
+        Arguments:
+            files : list-like
+                A list of file names of ofracs-parsable DFNs. These will be
+                merged.
+            bins : list-like
+                A list of strings representing aperture values in units microns
+    """
         toM = Decimal('1e-6')
         self.bins = list(map(lambda v:v*toM, sorted(map(Decimal,bins))))
 
@@ -123,23 +130,37 @@ class Binner:
         # cumulative density function
         self.cdf = list( v/N for v in accumulate(self.freq) )
 
-    def printTecplot(self, fout):
-        stdoutSave = sys.stdout
-        sys.stdout = fout
+    def strTecplotHeader(self):
+        """Return a string for a Tecplot ASCII file header"""
+        s = ''
+        s += f'# {os.path.realpath(__file__)} on {datetime.datetime.now()}\n'
+        s += f'VARIABLES="Bin [um]","Frequency","CDF"'
+        return s
 
-        print(f'# {os.path.realpath(__file__)} on {datetime.datetime.now()}')
-        print(f'VARIABLES="Bin [um]","Frequency","CDF"')
-        print(f'''ZONE T="{','.join(self.datafns)}" I={len(self.bins)+1}''')
+    def strTecplotZone(self):
+        """Return a string for ASCII Tecplot zone data"""
+        s = ''
 
+        # zone header
+        s += f'''ZONE T="{','.join(self.datafns)}" I={len(self.bins)+1}\n'''
+
+        # aux data
         # nice values for the descStats
-        print(f'AUXDATA N="{self.descStats["N"]}"')
-        print(f'AUXDATA ARITHMETRICMEAN="{self.descStats["Arithmetic mean"]*1e6:.0f}"')
-        print(f'AUXDATA GEOMETRICMEAN="{self.descStats["Geometric mean"]*1e6:.0f}"')
-        print(f'AUXDATA VARIANCE="{self.descStats["Variance"]:.4g}"')
-        print(f'AUXDATA SKEWNESS="{self.descStats["Skewness"]:.4g}"')
+        s += f'AUXDATA N="{self.descStats["N"]}"\n'
+        s += f'AUXDATA ARITHMETRICMEAN="{self.descStats["Arithmetic mean"]*1e6:.0f}"\n'
+        s += f'AUXDATA GEOMETRICMEAN="{self.descStats["Geometric mean"]*1e6:.0f}"\n'
+        s += f'AUXDATA VARIANCE="{self.descStats["Variance"]:.4g}"\n'
+        s += f'AUXDATA SKEWNESS="{self.descStats["Skewness"]:.4g}"\n'
+        s += f'''AUXDATA DATAFILES="{','.join(self.datafns)}"\n'''
 
+        # zone data
         for i,f,c in zip(count(1), self.freq, self.cdf):
-            print(f'{i} {f:10d} {c:10.5f}')
+            s += f'{i} {f:10d} {c:10.5f}\n'
+
+        return s
+
+    def strTecplotFooter(self):
+        """Return the CUSTOMLABELS string, etc, as tecplot footer info"""
 
         conv = Decimal('1e6') # convert to microns
         binsMicrons = list(map( lambda v: v*conv, self.bins ) )
@@ -147,8 +168,16 @@ class Binner:
                 f'{a!s}-{b!s}' for (a,b) in
                     zip([0,]+binsMicrons[:-1], binsMicrons) )
         foo += f'", ">{binsMicrons[-1]}'
-        print(f'CUSTOMLABELS "{foo}"')
 
+        return f'CUSTOMLABELS "{foo}"'
+
+    def printTecplot(self, fout):
+        stdoutSave = sys.stdout
+        sys.stdout = fout
+
+        print(self.strTecplotHeader())
+        print(self.strTecplotZone())
+        print(self.strTecplotFooter())
 
         sys.stdout = stdoutSave
 
