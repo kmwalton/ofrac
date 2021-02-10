@@ -125,7 +125,9 @@ class Binner:
                 'Arithmetic mean':mean,
                 'Geometric mean':gmean(aps),
                 'Variance':variance,
-                'Skewness':skewness }
+            'Skewness':skewness,
+            'Max. Frequency':max(self.freq),
+        }
 
         # cumulative density function
         self.cdf = list( v/N for v in accumulate(self.freq) )
@@ -134,7 +136,13 @@ class Binner:
         """Return a string for a Tecplot ASCII file header"""
         s = ''
         s += f'# {os.path.realpath(__file__)} on {datetime.datetime.now()}\n'
-        s += f'VARIABLES="Bin [um]","Frequency","CDF"'
+        s += f'VARIABLES="Bin [um]","Frequency","CDF","Rel.Frequency"\n'
+        s += """#Notes:
+# Rel.Frequency is the frequency (count) of each bin divided by the maximum
+# frequency (count) ocurring in any bin.
+# The AUXDATA in each zone contains this maximum value for display purposes.
+"""
+
         return s
 
     def strTecplotZone(self):
@@ -147,15 +155,19 @@ class Binner:
         # aux data
         # nice values for the descStats
         s += f'AUXDATA N="{self.descStats["N"]}"\n'
-        s += f'AUXDATA ARITHMETRICMEAN="{self.descStats["Arithmetic mean"]*1e6:.0f}"\n'
+        s += f'AUXDATA ARITHMETICMEAN="{self.descStats["Arithmetic mean"]*1e6:.0f}"\n'
         s += f'AUXDATA GEOMETRICMEAN="{self.descStats["Geometric mean"]*1e6:.0f}"\n'
         s += f'AUXDATA VARIANCE="{self.descStats["Variance"]:.4g}"\n'
         s += f'AUXDATA SKEWNESS="{self.descStats["Skewness"]:.4g}"\n'
+        s += f'AUXDATA FREQ_MAX="{self.descStats["Max. Frequency"]:.4g}"\n'
+        s += f'AUXDATA REGION="{self.grid.strSize()}"\n'
         s += f'''AUXDATA DATAFILES="{','.join(self.datafns)}"\n'''
 
         # zone data
+        maxf = self.descStats["Max. Frequency"]
         for i,f,c in zip(count(1), self.freq, self.cdf):
-            s += f'{i} {f:10d} {c:10.5f}\n'
+            relf = f/maxf
+            s += f'{i:<2d} {f:10d} {c:10.6f} {relf:10.6f}\n'
 
         return s
 
