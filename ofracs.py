@@ -61,9 +61,27 @@ def D_AP(v):
 
 DINF = Decimal('infinity')
 
-def toDTuple(someString):
-    """return a tuple of Decimals from some coordinate-like or list-like string"""
-    return tuple( D_CO(v) for v in re.sub("[(),]",' ',someString).split() )
+def toDTuple(s):
+    """Return a tuple of coordinate precision Decimals
+        
+    Arguments:
+        s : str or list-like
+            strs must look like a list of numbers tuple, like '(x,y,z)',
+            'x y z', 'x,y z', or '[u, v, w x y z'
+            list-likes must be a sequence of number-like things.
+    """
+
+    ivals = iter([0,0,0,])
+
+    if type(s) is str:
+        ivals = iter(re.sub("[(),]",' ',s).strip().split())
+    elif hasattr(s,'__iter__'):
+        ivals = iter(s)
+    else:
+        raise ValueError(f'"toDTuple" expected string or list-like, but got '
+                '{type(s)}.')
+    
+    return tuple( D_CO(v) for v in ivals )
 
 def numTuple2str( somedt, sep=',', start='(', end=')' ):
     return start+\
