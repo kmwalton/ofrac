@@ -221,6 +221,8 @@ class OFrac():
     def nudge(self, nudgeIncrement):
         """Modify a fracture to new "nudged" coordinates."""
 
+        returnstatus = True
+
         nudgeIncrement = D_CO(nudgeIncrement)
 
         def n(v):
