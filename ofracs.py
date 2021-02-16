@@ -862,6 +862,12 @@ class OFracGrid():
                     k,*v, w=wid), file=sys.stderr )
 
 
+    def strDomFromTo(self):
+        """Return a formatted string <from>-><to>"""
+        st = numTuple2str(self.domainOrigin)
+        en = numTuple2str(self.getDomainEnd())
+        return f"{st}->{en}"
+
     def __str__(self):
         s = "Orthogonal Fracture Grid with:\n"
 
@@ -872,9 +878,7 @@ class OFracGrid():
             return p
         
         stuff = {
-            "Size":"{}->{}".format(
-                numTuple2str(self.domainOrigin),
-                numTuple2str(self.getDomainEnd() )),
+            "Size":self.strDomFromTo(),
 
             "Mins & Maxes":"{}".format(
                     ",".join( numTuple2str(t,sep='->') for t in self._mima)),
