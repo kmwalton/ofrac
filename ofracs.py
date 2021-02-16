@@ -315,6 +315,11 @@ class OFracGrid():
 
         # set origin
         # set size
+        if domainOrigin is not None:
+            domainOrigin = toDTuple(domainOrigin)
+        if domainSize is not None:
+            domainSize = toDTuple(domainSize)
+        
         self._setDomain(domainOrigin, domainSize)
         
         self._ocounts=[0,0,0]
