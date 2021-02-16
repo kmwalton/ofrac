@@ -19,7 +19,8 @@ Documentation intended to work with pdoc3.
 """
 
 import sys,warnings,copy,re,os,pickle
-from decimal import *
+import decimal
+from decimal import Decimal,getcontext
 from bisect import bisect_left,bisect_right
 from math import log10,floor
 from itertools import chain
@@ -35,12 +36,29 @@ getcontext().prec = 12
 N_COORD_DIG = Decimal('0.001')
 N_APERT_DIG = Decimal('0.000001')
 
+def D(v,new_prec):
+    """Return a decimal with the specified quantization/precision"""
+
+    try:
+        return Decimal(v).quantize(new_prec)
+    except decimal.InvalidOperation as e:
+        if not v.is_finite():
+            return v
+        else:
+            raise ValueError(f'Cannot re-quantize {v}') from e
+    except Exception as e:
+        raise ValueError(f'Argument {v} of type {type(v)}.') from e
+
+
 def D_CO(v):
     """Return a decimal with the required number of digits for coordinates"""
-    return Decimal(v).quantize(N_COORD_DIG)
+
+    return D(v,N_COORD_DIG)
+
 def D_AP(v):
     """Return a decimal with the required number of digits for apertures"""
-    return Decimal(v).quantize(N_APERT_DIG)
+    return D(v,N_APERT_DIG)
+
 DINF = Decimal('infinity')
 
 def toDTuple(someString):
