@@ -160,7 +160,7 @@ class Binner:
         s += f'AUXDATA VARIANCE="{self.descStats["Variance"]:.4g}"\n'
         s += f'AUXDATA SKEWNESS="{self.descStats["Skewness"]:.4g}"\n'
         s += f'AUXDATA FREQ_MAX="{self.descStats["Max. Frequency"]:.4g}"\n'
-        s += f'AUXDATA REGION="{self.grid.strSize()}"\n'
+        s += f'AUXDATA REGION="{self.grid.strDomFromTo()}"\n'
         s += f'''AUXDATA DATAFILES="{','.join(self.datafns)}"\n'''
 
         # zone data
