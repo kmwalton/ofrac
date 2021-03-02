@@ -22,7 +22,7 @@ import sys,warnings,copy,re,os,pickle
 import decimal
 from decimal import Decimal,getcontext
 from bisect import bisect_left,bisect_right
-from math import log10,floor
+from math import log10,floor,ceil
 from itertools import chain
 
 __DEBUG__ = False
@@ -802,7 +802,8 @@ class OFracGrid():
                 l2 = gla[i+1]
 
                 if l2-l1 > maxS:
-                    spac = (l2-l1)/maxS
+                    nspac = ceil((l2-l1)/maxS)
+                    spac = (l2-l1)/nspac
                     while l1 < l2-eps:
                         newGl.append( l1 )
                         l1 += spac
@@ -810,7 +811,7 @@ class OFracGrid():
                     newGl.append( l1 )
 
             newGl.append(gla[-1])
-            self._gl[a] = newGl
+            self._gl[a] = newGl[:]
 
             
 
