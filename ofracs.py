@@ -396,6 +396,7 @@ class OFracGrid():
                 else:
                     raise RuntimeError( f'ABORT: Fracture {i} bad: {err!s}' )
 
+        self._reCountFractures()
 
         if messages:
             nm = len(messages)
