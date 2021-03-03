@@ -1049,6 +1049,9 @@ class OFracGrid():
 
                 newGrid._fx.append( OFrac(fromOFrac=f, myNet=newGrid) )
 
+            for i in range(3):
+                newGrid._ocounts[i] += other._ocounts[i]
+
             if __VERBOSITY__ > 4:
                 print()
 
