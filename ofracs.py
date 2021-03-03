@@ -576,7 +576,11 @@ class OFracGrid():
 
 # domain information
     def getBounds(self):
-        if not self._gridValid: self._remakeGridLineLists()
+        if not self._gridValid:
+            raise RuntimeError(
+                    "getBounds "
+                    "called when _gridValid == False")
+            #self._remakeGridLineLists()
         return copy.deepcopy(self._mima)
 
     def invalidateGrid(self):
@@ -745,7 +749,11 @@ class OFracGrid():
 
     def getGridLineFirstInterval(self, axis):
         """Return the interval between first two gridlines of a given axis"""
-        if not self._gridValid: self._remakeGridLineLists()
+        if not self._gridValid:
+            raise RuntimeError(
+                    "getGridLineFirstInterval "
+                    "called when _gridValid == False")
+            #self._remakeGridLineLists()
         return self._gl[axis][1] - self._gl[axis][0]
 
     def iterGridLines(self, axis):
@@ -756,14 +764,22 @@ class OFracGrid():
             axis = 'xyz'.find(axis.lower())
         if axis < 0 or axis > 2: raise ValueError('bad axis')
 
-        if not self._gridValid: self._remakeGridLineLists()
+        if not self._gridValid:
+            raise RuntimeError(
+                    "iterGridLines "
+                    "called when _gridValid == False")
+            #self._remakeGridLineLists()
+
         for v in self._gl[axis]:
             yield v
 
     def isUniformGridSpacing(self, axis):
         """Scan grid lines to determine if spacing is uniform"""
         if not self._gridValid:
-            self._remakeGridLineLists()
+            raise RuntimeError(
+                    "isUniformGridSpacing "
+                    "called when _gridValid == False")
+            #self._remakeGridLineLists()
 
         # convert to integer axis
         if type(axis) == str:
@@ -814,6 +830,7 @@ class OFracGrid():
             newGl.append(gla[-1])
             self._gl[a] = newGl[:]
 
+        self._gridValid = True
             
 
     def refineNearFx(self, refList):
