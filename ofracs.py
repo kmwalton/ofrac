@@ -707,7 +707,23 @@ class OFracGrid():
             yield f
 
     def nudgeAll( self, nudgeTo ):
-        """Removes fractures or fails depending on __FX_COLLAPSE_POLICY__"""
+        """Nudge existing gridlines and all fractures to specified increment.
+
+        Fixed gridlines are not nudged.
+
+        Removes fractures or fails depending on __FX_COLLAPSE_POLICY__
+        """
+
+        nudgeInc = D_CO(nudgeTo)
+
+        def nudger(v):
+            return nudge(v,nudgeInc)
+
+        for a in range(3):
+            newGL = set(map(nudger, self._gl[a]))
+            newGL.update(self._fixedgl[a])
+            self._gl[a] = sorted(newGL) 
+
         failedNudges = []
         for i,of in enumerate(self._fx):
             if not self._fx[i].nudge( nudgeTo ): failedNudges.append(i)
