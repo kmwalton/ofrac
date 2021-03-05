@@ -23,7 +23,7 @@ import decimal
 from decimal import Decimal,getcontext
 from bisect import bisect_left,bisect_right
 from math import log10,floor,ceil
-from itertools import chain
+from itertools import chain,count
 
 __DEBUG__ = False
 __VERBOSITY__ = 0
@@ -58,6 +58,10 @@ def D_CO(v):
 def D_AP(v):
     """Return a decimal with the required number of digits for apertures"""
     return D(v,N_APERT_DIG)
+
+def nudge(v,increment):
+    """Nudge v to the nearest multiple of increment."""
+    return ((v/increment).quantize(0) * increment).quantize(N_COORD_DIG)
 
 DINF = Decimal('infinity')
 
@@ -225,10 +229,10 @@ class OFrac():
 
         nudgeIncrement = D_CO(nudgeIncrement)
 
-        def n(v):
-            return ((v/nudgeIncrement).quantize(0) * nudgeIncrement).quantize(N_COORD_DIG)
+        def myNudger(v):
+            return nudge(v,nudgeIncrement)
         
-        newd = tuple( map( n, self.d ) )
+        newd = tuple(map(myNudger, self.d))
 
         try:
         self._checkCollapse("nudging", newd)
@@ -590,7 +594,6 @@ class OFracGrid():
     def setDomainSize(self, domainOr, domSz):
         """Set the domain size, possibly exclude gridlines and fractures"""
 
-
         self._setDomain(domainOr, domSz)
 
         # remove fixed gridlines outside of domain
@@ -676,6 +679,54 @@ class OFracGrid():
             else:                         return sum(aList)
 
         return tuple( map( sumInfGuarded, zip(self.domainOrigin,self.domainSize) ) )
+
+    def translate(self, t):
+        """Translate all gridlines and fractures.
+
+        Arguments:
+            t : list-like
+                Three components of the translation magnitude.
+        """
+
+        t = toDTuple(t)
+
+        # move fractures
+        for f in self._fx:
+            newd = 6*[ None, ]
+            for i,tv in zip(count(start=0,step=2),t):
+                newd[i  ] = f.d[i  ]+tv
+                newd[i+1] = f.d[i+1]+tv
+            f.d = tuple(newd)
+
+        newOrigin = list(self.domainOrigin) #mutable
+
+        # move grid
+        for ax,tv in enumerate(t):
+
+            if tv == Decimal('0'):
+                continue
+
+            # plusequals
+            def pe_tv(v):
+                return v+tv
+
+            # move origin
+            newOrigin[ax] += tv
+
+            # move mins and maxes
+            self._mima[ax][0] += tv
+            self._mima[ax][1] += tv
+
+            # move fixed gridlines
+            self._fixedgl[ax] = set(map(pe_tv,self._fixedgl[ax]))
+
+            # move gridlines, inplace
+            self._gl[ax][:] = map(pe_tv,self._gl[ax])
+
+        self.domainOrigin = tuple(newOrigin)
+        del newOrigin
+
+
 
 # methods for fractures        
     def addFracture( self, candidateOFrac, index=-1 ):
