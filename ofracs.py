@@ -626,7 +626,7 @@ class OFracGrid():
             l = bisect_right( gla, e[a] )
             gla = gla[f:l]
 
-            if gla[0] != s[a]:
+            if not gla or gla[0] != s[a]:
                 gla.insert(0,s[a])
 
             if gla[-1] != e[a]:
