@@ -481,8 +481,8 @@ class OFracGrid():
                 self.domainOrigin = conv2tup([0.,0.,0.])
 
         for v in self.domainSize:
-            if v <= Decimal('0.0'):
-                raise ValueError('Must have positive size values for domain')
+            if v < Decimal('0.0'):
+                raise ValueError('Must have >=0 size values for domain')
 
         for a in range(3):
             s = self.domainOrigin[a]
@@ -1109,7 +1109,8 @@ class OFracGrid():
                         zip(newGrid.domainOrigin,other.domainOrigin)))
 
             domE = tuple(map(lambda v: nonInfMax(v[0],v[1],v[2],v[3]),
-                        zip(newGrid.domainOrigin,newGrid.domainSize,other.domainOrigin,other.domainSize)))
+                        zip(newGrid.domainOrigin,newGrid.domainSize,
+                            other.domainOrigin,other.domainSize)))
 
             domS = tuple(map(lambda v: v[1]-v[0], zip(domO,domE)))
 
