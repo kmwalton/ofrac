@@ -752,6 +752,21 @@ class OFracGrid():
             else:
                 raise RuntimeError( f'ABORT: Fracture {index} bad: {err!s}' )
 
+    def delFracture( self, indexList ):
+        """Delete fracture(s)
+
+        Arguments:
+            indexList : list of int
+                Remove fractures at the given indices (based on order of
+                OFracGrid.iterFracs
+        """
+
+        for i in reversed(sorted(indexList)):
+            (o,v) = self._fx[i].determinePerpAxisVal()
+            self._ocounts[o] -= 1
+            del self._fx[i]
+
+
     def iterFracs(self):
         """iterate over fractures"""
         for f in self._fx:
