@@ -136,11 +136,12 @@ class Binner:
         """Return a string for a Tecplot ASCII file header"""
         s = ''
         s += f'# {os.path.realpath(__file__)} on {datetime.datetime.now()}\n'
-        s += f'VARIABLES="Bin [um]","Frequency","CDF","Rel.Frequency"\n'
+        s += f'VARIABLES="Bin [um]","Frequency","CDF","Frequency (%)"\n'
         s += """#Notes:
-# Rel.Frequency is the frequency (count) of each bin divided by the maximum
-# frequency (count) ocurring in any bin.
-# The AUXDATA in each zone contains this maximum value for display purposes.
+# Frequency (%) is the normalized frequency, i.e. the count of each bin divided
+# by the total count of fractures.
+# The AUXDATA FREQ_MAX in each zone contains the maximum value frequency (count)
+# value of the bins.
 """
 
         return s
@@ -164,10 +165,10 @@ class Binner:
         s += f'''AUXDATA DATAFILES="{','.join(self.datafns)}"\n'''
 
         # zone data
-        maxf = self.descStats["Max. Frequency"]
+        n = self.descStats["N"]
         for i,f,c in zip(count(1), self.freq, self.cdf):
-            relf = f/maxf
-            s += f'{i:<2d} {f:10d} {c:10.6f} {relf:10.6f}\n'
+            normf = f/n
+            s += f'{i:<2d} {f:10d} {c:10.6f} {normf:10.6f}\n'
 
         return s
 
