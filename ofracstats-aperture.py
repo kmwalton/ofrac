@@ -117,8 +117,24 @@ class Binner:
 
 
         # descriptive statistics
-        aps = np.fromiter(map( lambda f: f.ap, self.grid.iterFracs()), dtype=np.float_)
-        (N,(apMin,apMax),mean,variance,skewness,kurtosis) = describe(aps)
+
+        # default
+        (N,(apMin,apMax),mean,variance,skewness,kurtosis) = \
+            (0,(0.,0.), 0.,0.,0.,0.,)
+
+        # population of apertures to be described
+        aps = np.fromiter(
+                map( lambda f: f.ap, self.grid.iterFracs()),
+                dtype=np.float_)
+
+        # degenerate population
+        if aps.size == 1:
+            ap = aps[0]
+            (N,(apMin,apMax),mean,variance,skewness,kurtosis) = \
+                (1,(ap,ap), ap,0.,0.,0.,)
+        # normal case
+        elif aps.size > 1:
+            (N,(apMin,apMax),mean,variance,skewness,kurtosis) = describe(aps)
 
         self.descStats = {
                 'N':N,
@@ -151,7 +167,7 @@ class Binner:
         s = ''
 
         # zone header
-        s += f'''ZONE T="{','.join(self.datafns)}" I={len(self.bins)+1}\n'''
+        s += f'''ZONE T="{self.grid.strDomFromTo()}" I={len(self.bins)+1}\n'''
 
         # aux data
         # nice values for the descStats
