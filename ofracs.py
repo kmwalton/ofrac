@@ -235,7 +235,7 @@ class OFrac():
         newd = tuple(map(myNudger, self.d))
 
         try:
-        self._checkCollapse("nudging", newd)
+            self._checkCollapse("nudging", newd)
 
         except FractureCollapseWarning as e:
             if __FX_COLLAPSE_POLICY__ == 'fail':
@@ -247,7 +247,7 @@ class OFrac():
                 returnstatus = False
 
         else:
-        self.d = newd
+            self.d = newd
 
         # invalidate the gridlines in the containing network
         if self.myNet is not None:
