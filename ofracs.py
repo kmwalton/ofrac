@@ -218,6 +218,16 @@ class OFrac():
         return '({:{w}}->{:{w}}, {:{w}}->{:{w}}, {:{w}}->{:{w}}), ap='.format(
                 *self.d, w=wid)+str(self.ap)
 
+    def asRFGenStr(self,i=None):
+        wid = 8
+        s= '      '
+        if i is not None:
+            s = f'{i:6d}'
+        s+= (6*' {:{w}}').format(*self.d, w=wid)
+        s+= f' {self.ap:.10f}'
+        #s+= f' {self.determineFracOrientation()+1}'
+        return s
+
     def __repr__(self):
         # TODO output more grungy details here
         return self.__str__()
