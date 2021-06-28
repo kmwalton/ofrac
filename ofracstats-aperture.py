@@ -55,14 +55,18 @@ class Binner:
 
 
     def __init__(self, files, bins):
-    """
-        Arguments:
-            files : list-like
-                A list of file names of ofracs-parsable DFNs. These will be
-                merged.
-            bins : list-like
-                A list of strings representing aperture values in units microns
-    """
+        """
+
+            Arguments:
+
+                files : list-like
+                    A list of file names of ofracs-parsable DFNs. These will be
+                    merged.
+
+                bins : list-like
+                    A list of strings representing aperture values in units
+                    microns.
+        """
         toM = Decimal('1e-6')
         self.bins = list(map(lambda v:v*toM, sorted(map(Decimal,bins))))
 
@@ -137,10 +141,10 @@ class Binner:
             (N,(apMin,apMax),mean,variance,skewness,kurtosis) = describe(aps)
 
         self.descStats = {
-                'N':N,
-                'Arithmetic mean':mean,
-                'Geometric mean':gmean(aps),
-                'Variance':variance,
+            'N':N,
+            'Arithmetic mean':mean,
+            'Geometric mean':gmean(aps),
+            'Variance':variance,
             'Skewness':skewness,
             'Max. Frequency':max(self.freq),
         }
