@@ -25,6 +25,43 @@ from bisect import bisect_left,bisect_right
 from math import log10,floor,ceil
 from itertools import chain,count
 
+def populate_parsers():
+    """Return a list of OFracGrid parser options.
+
+    The list will depen on what other packages are on the system and  accessible
+    in PYTHONPATH, like FRACTRAN, HGS, RFGen, or Compflow, which may have
+    parsers of orthogonal fracture networks.
+    """
+
+    ret = [ OFracGrid.PickleParser, ]
+
+    try:
+        import parser_fractran
+        ret += list(parser_fractran.iterFractranParsers())
+    except ImportError as e:
+        print("Warning: did not find 'parser_fractran'. Cannot parse " \
+                "FRACTRAN-type orthogonal fracture networks.",
+                file=sys.stderr)
+
+    try:
+        import parser_rfgen
+        ret += [ parser_rfgen.RFGenOutFileParser, ]
+    except ImportError as e:
+        print("Warning: did not find 'parser_rfgen'. Cannot parse " \
+                "RFGen-type orthogonal fracture networks.",
+                file=sys.stderr)
+
+    try:
+        import parser_hgs_rfgeneco
+        #parserOptions += list(parser_hgs_rfgeneco.??? )
+    except ImportError as e:
+        print("Warning: did not find 'parser_hgs_rfgeneco'. Cannot parse "\
+                "HGS+RFGen-style orthogonal fracture networks.",
+                file=sys.stderr)
+
+    return ret
+
+
 __DEBUG__ = False
 __VERBOSITY__ = 0
 

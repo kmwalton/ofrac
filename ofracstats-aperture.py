@@ -23,26 +23,9 @@ from ofracs import OFracGrid,NotValidOFracGridError
 
 __VERBOSITY__ = 0
 
+
 # create a list of parser types
-parserOptions = [ OFracGrid.PickleParser, ]
-
-try:
-    import parser_fractran
-    parserOptions += list(parser_fractran.iterFractranParsers())
-except ImportError as e:
-    print("Warning: did not find 'parser_fractran'. Cannot parse FRACTRAN-type orthogonal fracture networks.", file=sys.stderr)
-
-try:
-    import parser_rfgen
-    parserOptions += [ parser_rfgen.RFGenOutFileParser, ]
-except ImportError as e:
-    print("Warning: did not find 'parser_rfgen'. Cannot parse RFGen-type orthogonal fracture networks.", file=sys.stderr)
-
-try:
-    import parser_hgs_rfgeneco
-    #parserOptions += list(parser_hgs_rfgeneco.??? )
-except ImportError as e:
-    print("Warning: did not find 'parser_hgs_rfgeneco'. Cannot parse HGS+RFGen-style orthogonal fracture networks.", file=sys.stderr)
+parserOptions = ofracs.populate_parsers()
 
 
 __VERBOSITY__ = 0
@@ -125,20 +108,27 @@ class Binner:
         # default
         (N,(apMin,apMax),mean,variance,skewness,kurtosis) = \
             (0,(0.,0.), 0.,0.,0.,0.,)
+        (lognormalmean, lognormalvar) = (0.,0.)
+        logfunc = np.log10
 
         # population of apertures to be described
         aps = np.fromiter(
                 map( lambda f: f.ap, self.grid.iterFracs()),
                 dtype=np.float_)
 
+
         # degenerate population
         if aps.size == 1:
             ap = aps[0]
             (N,(apMin,apMax),mean,variance,skewness,kurtosis) = \
-                (1,(ap,ap), ap,0.,0.,0.,)
+                (1,(ap,ap),ap,0.,0.,0.,)
+            lognormalmean = logfunc(mean)
+
         # normal case
         elif aps.size > 1:
             (N,(apMin,apMax),mean,variance,skewness,kurtosis) = describe(aps)
+            (_z,(_a,_b), lognormalmean, lognormalvar, _c, _d) = \
+                describe(logfunc(aps))
 
         self.descStats = {
             'N':N,
@@ -147,6 +137,8 @@ class Binner:
             'Variance':variance,
             'Skewness':skewness,
             'Max. Frequency':max(self.freq),
+            'lognormal mean':lognormalmean,
+            'lognormal var':lognormalvar,
         }
 
         # cumulative density function
@@ -176,11 +168,17 @@ class Binner:
         # aux data
         # nice values for the descStats
         s += f'AUXDATA N="{self.descStats["N"]}"\n'
-        s += f'AUXDATA ARITHMETICMEAN="{self.descStats["Arithmetic mean"]*1e6:.0f}"\n'
-        s += f'AUXDATA GEOMETRICMEAN="{self.descStats["Geometric mean"]*1e6:.0f}"\n'
+        s += 'AUXDATA ARITHMETICMEAN='\
+             f'"{self.descStats["Arithmetic mean"]*1e6:.0f}"\n'
+        s += 'AUXDATA GEOMETRICMEAN='\
+             f'"{self.descStats["Geometric mean"]*1e6:.0f}"\n'
         s += f'AUXDATA VARIANCE="{self.descStats["Variance"]:.4g}"\n'
         s += f'AUXDATA SKEWNESS="{self.descStats["Skewness"]:.4g}"\n'
         s += f'AUXDATA FREQ_MAX="{self.descStats["Max. Frequency"]:.4g}"\n'
+        s += 'AUXDATA LOGNORMMEAN='\
+             f'''"{self.descStats['lognormal mean']:.4g}"\n'''
+        s += 'AUXDATA LOGNORMVAR='\
+             f'''"{self.descStats['lognormal var']:.4g}"\n'''
         s += f'AUXDATA REGION="{self.grid.strDomFromTo()}"\n'
         s += f'''AUXDATA DATAFILES="{','.join(self.datafns)}"\n'''
 
