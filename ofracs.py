@@ -175,6 +175,10 @@ class OFrac():
     """An orthogonal fracture object"""
 
     def __init__(self, *vals, **kwargs):
+
+        self.d = 6*[0.,]
+        """Position data:, xfrom, xto, yfrom ... zto."""
+
         if vals:
             # assume initializing from xfrom, xto, yfrom, yto, zfrom, zto, ap
             self.__init_from_vals__( *vals )
@@ -845,9 +849,15 @@ class OFracGrid():
             del self._fx[i]
 
     def getFxCount(self):
+        """Return the number of fractures."""
         return len(self._fx)
 
     def getFxCounts(self):
+        """Return a 3-tuple the number of fractures in each orientation.
+
+        The 3-tuple has the order (N_yz,N_xz,N_xy), where the index in the tuple
+        is the index of the axis perpendicular to the fracture.
+        """
         return tuple(self._ocounts)
 
     def getHeader(self):
