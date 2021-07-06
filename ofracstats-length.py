@@ -136,7 +136,7 @@ class LengthBinner(OFracBinner):
         s = ''
 
         for i,c in enumerate('xyz'):
-            s += f'''ZONE T="{c}-length" I={len(self.bins)+1}\n'''
+            s += f'''ZONE T="{c}-length" I={len(self.bins)}\n'''
 
             n = np.sum(self.histo[c])
             for ibin,f in zip(count(1),self.histo[c]):
