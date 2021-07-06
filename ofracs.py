@@ -61,6 +61,35 @@ def populate_parsers():
 
     return ret
 
+def parse(file_name):
+    """Return an OFracGrid using any available parser"""
+
+    errmsg = ''
+    fxNet = None
+    for ParserClass in populate_parsers():
+        try:
+            parser = ParserClass(file_name)
+            fxNet = parser.getOFracGrid()
+
+        except BaseException as e:
+            errmsg += '\n'+ParserClass.__name__+\
+                      ' did not work- {}'.format(str(e))
+            fxNet = None
+
+        except:
+            (t,v,tb) = sys.exc_info()
+            print( "Unexpected error: {}\n{}\n\nTraceback:".format(t,v),
+                    file=sys.stderr )
+            traceback.print_tb(tb)
+            sys.exit(-1)
+
+        if fxNet:
+            break
+
+    if not fxNet:
+        raise NotValidOFracGridError(errmsg)
+
+    return fxNet
 
 __DEBUG__ = False
 __VERBOSITY__ = 0
