@@ -13,6 +13,7 @@ import argparse
 import datetime
 from itertools import count
 import numpy as np
+import scipy.stats
 
 import ofracs
 from ofracs import OFrac,OFracGrid,NotValidOFracGridError
@@ -69,7 +70,7 @@ class LengthBinner(OFracBinner):
 
         super().__init__(
                 'Length [m]',
-                list( str(b) for b in bins ),
+                list( f'{b:.0f}' for b in bins ),
                 )
 
         if len(files) > 1:
@@ -127,16 +128,36 @@ class LengthBinner(OFracBinner):
             counts[l2] += 1
 
         self.histo = {}
+        self.auxd = dict( (c,[]) for c in 'xyz' )
         for i,c in enumerate('xyz'):
             self.histo[c] = np.histogram(
                     length_data[i],
                     bins = self.bins+[1e308])[0]
+
+            stats = scipy.stats.describe(length_data[i])
+            gmean = scipy.stats.gmean(length_data[i])
+
+            self.auxd[c].extend( [
+                ('N',stats.nobs,''),
+                ('ARITHMETICMEAN',f'{stats.mean:.1f}',''),
+                ('GEOMEAN',f'{gmean:.1f}',''),
+                ('MIN_MAX',f'{stats.minmax[0]:.1f}..{stats.minmax[1]:.1f}',''),
+            ] )
+
+
+
 
     def strTecplotZone(self):
         s = ''
 
         for i,c in enumerate('xyz'):
             s += f'''ZONE T="{c}-length" I={len(self.bins)}\n'''
+
+            for k,v,comm in self.auxd[c]:
+                if comm:
+                    s += f'# {comm}:\n'
+                s += f'AUXDATA {k}="{v}"\n'
+
 
             n = np.sum(self.histo[c])
             for ibin,f in zip(count(1),self.histo[c]):
