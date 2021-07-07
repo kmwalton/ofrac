@@ -11,7 +11,7 @@ import argparse,sys,os,re,copy,traceback,glob,datetime
 from itertools import count,accumulate
 from decimal import Decimal
 from bisect import bisect
-from math import log10
+from math import log10,sqrt
 
 import numpy as np
 from scipy.stats import describe,gmean
@@ -166,21 +166,46 @@ class Binner:
         s += f'''ZONE T="{self.grid.strDomFromTo()}" I={len(self.bins)+1}\n'''
 
         # aux data
+        logn_mu = self.descStats["lognormal mean"]
+        logn_sigma = sqrt(self.descStats["lognormal var"])
+
+        auxd = {
+            'N':(f'{self.descStats["N"]}',''),
+            'ARITHMETICMEAN': (
+                f'{self.descStats["Arithmetic mean"]*1e6:.0f}',
+                'Arithmetic mean in microns' ),
+            'GEOMETRICMEAN':(
+                f'{self.descStats["Geometric mean"]*1e6:.0f}',
+                'Geometric mean in microns' ),
+            'VARIANCE':(f'{self.descStats["Variance"]:.4g}',''),
+            'SKEWNESS':(f'{self.descStats["Skewness"]:.4g}',''),
+            'FREQ_MAX':(
+                f'{self.descStats["Max. Frequency"]:.4g}',
+                'The frequency in the bin with the highest frequency'),
+            'LOGNORMMEAN': (
+                 f'{self.descStats["lognormal mean"]:.4g}',
+                 'Mean value calculated after log10-ing the sample' ),
+            'LOGNORMVAR': (
+                 f'{self.descStats["lognormal var"]:.4g}',
+                 'Variance value calculated after log10-ing the sample' ),
+
+            'MU_LOGN':(
+                f'{10**(6+self.descStats["lognormal mean"]):.0f}',
+                'Mean of the base-10 lognormal distribution in um'),
+            'SPREAD_LOGN':(
+                f'{10**(6+logn_mu-logn_sigma):.0f}..' \
+                f'{10**(6+logn_mu+logn_sigma):.0f}',
+                'Lognormal mean +/- one lognorm std.dev. in um'),
+            
+            'REGION':(f'{self.grid.strDomFromTo()}',''),
+            'DATAFILES':(f'{",".join(self.datafns)}',''),
+        }
+
         # nice values for the descStats
-        s += f'AUXDATA N="{self.descStats["N"]}"\n'
-        s += 'AUXDATA ARITHMETICMEAN='\
-             f'"{self.descStats["Arithmetic mean"]*1e6:.0f}"\n'
-        s += 'AUXDATA GEOMETRICMEAN='\
-             f'"{self.descStats["Geometric mean"]*1e6:.0f}"\n'
-        s += f'AUXDATA VARIANCE="{self.descStats["Variance"]:.4g}"\n'
-        s += f'AUXDATA SKEWNESS="{self.descStats["Skewness"]:.4g}"\n'
-        s += f'AUXDATA FREQ_MAX="{self.descStats["Max. Frequency"]:.4g}"\n'
-        s += 'AUXDATA LOGNORMMEAN='\
-             f'''"{self.descStats['lognormal mean']:.4g}"\n'''
-        s += 'AUXDATA LOGNORMVAR='\
-             f'''"{self.descStats['lognormal var']:.4g}"\n'''
-        s += f'AUXDATA REGION="{self.grid.strDomFromTo()}"\n'
-        s += f'''AUXDATA DATAFILES="{','.join(self.datafns)}"\n'''
+        for k,(v,comm) in auxd.items():
+            if comm:
+                s += f'# {comm}:\n'
+            s += f'AUXDATA {k}="{v}"\n'
 
         # zone data
         n = self.descStats["N"]
