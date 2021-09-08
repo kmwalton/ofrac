@@ -40,7 +40,7 @@ The following is the minimal header line, some column titles may be
 omitted/altered, but the core 'xfrom ... zto' must be present
        xfrom    xto    yfrom    yto    zfrom    zto
 // This comment is ignored.
-// Axis-aligned fractures are defined by 
+// Axis-aligned fractures are defined by
 // id  xfrom    xto    yfrom    yto    zfrom   zto  aperture  orientation
    1    0.0     1.0     0.5     0.5     0.0    1.0  0.000100   2
 "
@@ -57,13 +57,17 @@ TODO: - reimplemnt superposition of FILES
 
 """
 
-import argparse,sys,re,copy,traceback,glob
+import argparse
+import sys
+import re
+import traceback
+import glob
+import os
 import multiprocessing
-from random import random
 from random import uniform
 from math import log10
-from collections import deque
 from itertools import chain,product
+from collections import deque
 
 #from parser_fractran import *
 #from parser_rfgen import *
@@ -100,7 +104,7 @@ __VERBOSITY__ = 0
 #  some useful conversions between orientation strings and integer indices
 #
 # direction string to direction index mapping
-DIR  = { "x":0, "y":1, "z":2 }                  
+DIR  = { "x":0, "y":1, "z":2 }
 # RFGen orientation index to orientation string mapping
 INDO = { 1:"xy", 2:"xz", 3:"yz" }
 # orientation string to RFGen orientation index mapping
@@ -114,13 +118,13 @@ PERP = { "x":"yz", "y":"xz", "z":"xy", \
 
 def ofrac2ftuple( ofx ):
    """convert an OFrac object to this script's internal representation
-      
+
    used here:
    ( (x0, x1, y0, y1, z0, z1, ap), orientationstring )
-      
+
    """
    ofxo = OFrac.determineFracOrientation(ofx)
-   
+
    return ( tuple(map(float, ofx.d+(ofx.ap,))), OIND[ PERP[ 'xyz'[ofxo] ] ] )
 
 class NotValidInputFile(Exception):
@@ -147,7 +151,7 @@ class SpatialZone:            # {{{
 
          asString must contain one or two (x,y,z) triples. One triple implies
          the size of the zone, which is assumed to begin at (0,0,0).
-         
+
          Keywords (or abbreviated keyword)
             start | st,
             end | e, or
@@ -159,7 +163,7 @@ class SpatialZone:            # {{{
          truncateToZone : bool
             Causes fracture lengths to be calculated/reported for this spatial
             zone, if it is smaller than the whole fracture domain.
-         
+
       """
 
       if not size and not start and not end and not asString:
@@ -290,7 +294,7 @@ class FractureZone:                                         #{{{
       self.nScan = n
 
    def P10( self, dScanLine, nScanLine=None ):
-      
+
       if not nScanLine:
          nScanLine = self.nScan
 
@@ -309,7 +313,7 @@ class FractureZone:                                         #{{{
 
       for ci in range(nScanLine):
          (c1,c2) = ( uniform(*self.zn.r(d1)), uniform(*self.zn.r(d2)) )
-         count = sum( 1 for i in filter( 
+         count = sum( 1 for i in filter(
             lambda fd: fd[1]==o \
                and fd[0][od1ind] <= c1 and c1 < fd[0][od1ind+1] \
                and fd[0][od2ind] <= c2 and c2 < fd[0][od2ind+1],\
@@ -317,24 +321,26 @@ class FractureZone:                                         #{{{
 
          if __VERBOSITY__ > 1:
 
-             s = 'P10-{} for scanline at ({},{})=({:.3f},{:.3f})'.format(
+            s = 'P10-{} for scanline at ({},{})=({:.3f},{:.3f})'.format(
                      dScanLine,
                      PERP[dScanLine][0], PERP[dScanLine][1],
                      c1, c2,
                  )
- 
+
             cMag = max( len("{:.3f}".format(s)) for s in chain(*self.zn.c) ) + 1
 
             dens = float(count)/m
             spac = float('inf')
-            if count > 0: spac = 1.0/dens
-             print( "{}: {:6.3g}/m {:6.3g}m (count={})".format(
+
+            if count > 0:
+                spac = 1.0/dens
+            print( "{}: {:6.3g}/m {:6.3g}m (count={})".format(
                       s, dens, spac, count, w=cMag ) )
- 
-             if __VERBOSITY__ > 2:
+
+            if __VERBOSITY__ > 2:
                  s = 'Fractures found:\n'
                  w = int(log10(len(self.fracs)))
-                 for iff,ff in enumerate(filter( 
+                 for iff,ff in enumerate(filter(
                      lambda fd: fd[1]==o \
                        and fd[0][od1ind] <= c1 and c1 < fd[0][od1ind+1] \
                        and fd[0][od2ind] <= c2 and c2 < fd[0][od2ind+1],\
@@ -392,8 +398,8 @@ class FractureZone:                                         #{{{
          maxlength[d2] = max( maxlength[d2], d2l )
 
       return \
-         {'x':{'MIN':minlength[0], 'MAX':maxlength[0], 'SUM':lengths[0][0], 'COUNT':lengths[0][1]}, 
-          'y':{'MIN':minlength[1], 'MAX':maxlength[1], 'SUM':lengths[1][0], 'COUNT':lengths[1][1]}, 
+         {'x':{'MIN':minlength[0], 'MAX':maxlength[0], 'SUM':lengths[0][0], 'COUNT':lengths[0][1]},
+          'y':{'MIN':minlength[1], 'MAX':maxlength[1], 'SUM':lengths[1][0], 'COUNT':lengths[1][1]},
           'z':{'MIN':minlength[2], 'MAX':maxlength[2], 'SUM':lengths[2][0], 'COUNT':lengths[2][1]} }
 
    @staticmethod
@@ -420,7 +426,7 @@ class FractureZone:                                         #{{{
 
          # prune our full list of fractures down to ones that intersect this
          # plane
-         pFracs = list(filter( 
+         pFracs = list(filter(
             lambda fd: fd[1]!=oind and fd[0][2*d] <= positionOfPlane < fd[0][2*d+1],
             self.fracs ))
 
@@ -567,7 +573,7 @@ def doEverything(args, batchDir=''):
           try:
              parser = ParserClass(fnin)
              fxNet = parser.getOFracGrid()
-               
+
           except BaseException as e:
              errmsg += '\n'+ParserClass.__name__+' did not work- {}'.format(str(e))
              fxNet = None
@@ -616,7 +622,7 @@ def doEverything(args, batchDir=''):
        dom = SpatialZone()
        for zn in fracFileSubZones:
           dom.expandBoundingBox( zn )
-       
+
 
     if not dom:
        print("Could not determine domain size. Specify it with --domain",
@@ -707,12 +713,6 @@ Sample Zones:
     if __VERBOSITY__:
        print( "========= stats for fracture network sub-zones =========" )
 
-    
-
-
-
-
-
 
     # get ready for tecplot printing
     tecout = '''VARIABLES="X","Y","Z"\n'''
@@ -721,51 +721,48 @@ Sample Zones:
 
        r = results[izn]
 
-           if args.batch_dir:
-                if batchDir == args.batch_dir[0]:
-                    print(header)
-                print(rowFmt.format(batchDir, izn,
-                               # pick out just the P10s
-                           r[0][0][1],
-                           r[1][0][1],
-                           r[2][0][1],) )
+       if args.batch_dir:
+            if batchDir == args.batch_dir[0]:
+                print(header)
+            print(rowFmt.format(batchDir, izn,
+                           # pick out just the P10s
+                       r[0][0][1],
+                       r[1][0][1],
+                       r[2][0][1],) )
 
+       else:
+            print( "--- {} ---".format(str(zn) ) )
+            # print results
+       print('\n'.join( map(lambda v:v[1](v[0]), r)))
+
+
+       # zone header
+       tecout += f'''ZONE T="{zn!s}" ZONETYPE=ORDERED I=2 J=2 K=2 DATAPACKING=BLOCK\n'''
+       # Auxvar
+       for i,d in enumerate(sorted(DIR)):
+           tecout += f'''AUXDATA P10{d}="{r[i][0][1]:.3f}"\n'''
+
+       #import pdb ; pdb.set_trace()
+       tecout += f'''AUXDATA P33="{r[10][0]:.3g}"\n'''
+
+       # length stats ... P21???
+       lengths = fzn.lengths()
+       for os in sorted(DIR):
+           if lengths[os]['COUNT']>0:
+              print( "%s-length: min=%7.3f max=%7.3fm avg=%7.3fm (count=%4d)" %
+                 (os, lengths[os]['MIN'], lengths[os]['MAX'],
+                  lengths[os]['SUM'] / lengths[os]['COUNT'], lengths[os]['COUNT'] ) )
            else:
-                print( "--- {} ---".format(str(zn) ) )
-                # print results
-           print('\n'.join( map(lambda v:v[1](v[0]), r)))
+              print( "%s-length:         (count=%4d)" % (os, 0) )
 
-
-           # zone header
-           tecout += f'''ZONE T="{zn!s}" ZONETYPE=ORDERED I=2 J=2 K=2 DATAPACKING=BLOCK\n'''
-           # Auxvar
-           for i,d in enumerate(sorted(DIR)):
-               tecout += f'''AUXDATA P10{d}="{r[i][0][1]:.3f}"\n'''
-
-           #import pdb ; pdb.set_trace()
-           tecout += f'''AUXDATA P33="{r[10][0]:.3g}"\n'''
-
-
-
-
-                # length stats ... P21???
-                lengths = fzn.lengths()
-                for os in sorted(DIR):
-                   if lengths[os]['COUNT']>0:
-                      print( "%s-length: min=%7.3f max=%7.3fm avg=%7.3fm (count=%4d)" % 
-                         (os, lengths[os]['MIN'], lengths[os]['MAX'],
-                          lengths[os]['SUM'] / lengths[os]['COUNT'], lengths[os]['COUNT'] ) )
-                   else:
-                      print( "%s-length:         (count=%4d)" % (os, 0) )
-
-           #ZONE data
-           #import pdb ; pdb.set_trace()
-           coordBlks = [ '', '', '', ]
-           for z,y,x in product(*reversed(zn.c)):
-               coordBlks[0] += f' {x:11.3f}'
-               coordBlks[1] += f' {y:11.3f}'
-               coordBlks[2] += f' {z:11.3f}'
-           tecout += ''.join(f'# {d}\n{v[1:]}\n' for d,v in zip('xyz',coordBlks))
+       #ZONE data
+       #import pdb ; pdb.set_trace()
+       coordBlks = [ '', '', '', ]
+       for z,y,x in product(*reversed(zn.c)):
+           coordBlks[0] += f' {x:11.3f}'
+           coordBlks[1] += f' {y:11.3f}'
+           coordBlks[2] += f' {z:11.3f}'
+       tecout += ''.join(f'# {d}\n{v[1:]}\n' for d,v in zip('xyz',coordBlks))
 
     if 'tp_out' in args and args.tp_out: # not None or ''
         if __VERBOSITY__:
@@ -778,7 +775,7 @@ Sample Zones:
 
 if __name__ == '__main__':
     # command line options setup
-    parser = argparse.ArgumentParser( 
+    parser = argparse.ArgumentParser(
           formatter_class=argparse.RawDescriptionHelpFormatter,
           description= 'Calculates "P-- system" values for orthogonal fracture networks.',
           epilog=__doc__
@@ -871,7 +868,7 @@ if __name__ == '__main__':
                 print(f'Skipping: no valid inputs {d}', file=sys.stderr)
             finally:
                 os.chdir(scriptCallDir)
-                
+
 
     else:
         args.batch_dir = [] # "fix" the default 'None'
