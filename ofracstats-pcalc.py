@@ -75,27 +75,6 @@ from collections import deque
 
 from ofracs import *
 
-# create a list of parser types
-parserOptions = [ OFracGrid.PickleParser, ]
-
-try:
-    import parser_fractran
-    parserOptions += list(parser_fractran.iterFractranParsers())
-except ImportError as e:
-    print("Warning: did not find 'parser_fractran'. Cannot parse FRACTRAN-type orthogonal fracture networks.", file=sys.stderr)
-
-try:
-    import parser_rfgen
-    parserOptions += [ parser_rfgen.RFGenOutFileParser, ]
-except ImportError as e:
-    print("Warning: did not find 'parser_rfgen'. Cannot parse RFGen-type orthogonal fracture networks.", file=sys.stderr)
-
-try:
-    import parser_hgs_rfgeneco
-    #parserOptions += list(parser_hgs_rfgeneco.??? )
-except ImportError as e:
-    print("Warning: did not find 'parser_hgs_rfgeneco'. Cannot parse HGS+RFGen-style orthogonal fracture networks.", file=sys.stderr)
-
 __VERBOSITY__ = 0
 """Module level verbosity"""
 
@@ -569,7 +548,7 @@ def doEverything(args, batchDir=''):
        errmsg = ''
 
        # try some different parsers
-       for ParserClass in parserOptions:
+       for ParserClass in populate_parsers():
           try:
              parser = ParserClass(fnin)
              fxNet = parser.getOFracGrid()
