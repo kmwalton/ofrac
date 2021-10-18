@@ -25,6 +25,72 @@ from bisect import bisect_left,bisect_right
 from math import log10,floor,ceil
 from itertools import chain,count
 
+def populate_parsers():
+    """Return a list of OFracGrid parser options.
+
+    The list will depen on what other packages are on the system and  accessible
+    in PYTHONPATH, like FRACTRAN, HGS, RFGen, or Compflow, which may have
+    parsers of orthogonal fracture networks.
+    """
+
+    ret = [ OFracGrid.PickleParser, ]
+
+    try:
+        import parser_fractran
+        ret += list(parser_fractran.iterFractranParsers())
+    except ImportError as e:
+        print("Warning: did not find 'parser_fractran'. Cannot parse " \
+                "FRACTRAN-type orthogonal fracture networks.",
+                file=sys.stderr)
+
+    try:
+        import parser_rfgen
+        ret += [ parser_rfgen.RFGenOutFileParser, ]
+    except ImportError as e:
+        print("Warning: did not find 'parser_rfgen'. Cannot parse " \
+                "RFGen-type orthogonal fracture networks.",
+                file=sys.stderr)
+
+    try:
+        import parser_hgs_rfgeneco
+        #parserOptions += list(parser_hgs_rfgeneco.??? )
+    except ImportError as e:
+        print("Warning: did not find 'parser_hgs_rfgeneco'. Cannot parse "\
+                "HGS+RFGen-style orthogonal fracture networks.",
+                file=sys.stderr)
+
+    return ret
+
+def parse(file_name):
+    """Return an OFracGrid using any available parser"""
+
+    errmsg = ''
+    fxNet = None
+    for ParserClass in populate_parsers():
+        try:
+            parser = ParserClass(file_name)
+            fxNet = parser.getOFracGrid()
+
+        except BaseException as e:
+            errmsg += '\n'+ParserClass.__name__+\
+                      ' did not work- {}'.format(str(e))
+            fxNet = None
+
+        except:
+            (t,v,tb) = sys.exc_info()
+            print( "Unexpected error: {}\n{}\n\nTraceback:".format(t,v),
+                    file=sys.stderr )
+            traceback.print_tb(tb)
+            sys.exit(-1)
+
+        if fxNet:
+            break
+
+    if not fxNet:
+        raise NotValidOFracGridError(errmsg)
+
+    return fxNet
+
 __DEBUG__ = False
 __VERBOSITY__ = 0
 
@@ -138,6 +204,10 @@ class OFrac():
     """An orthogonal fracture object"""
 
     def __init__(self, *vals, **kwargs):
+
+        self.d = 6*[0.,]
+        """Position data:, xfrom, xto, yfrom ... zto."""
+
         if vals:
             # assume initializing from xfrom, xto, yfrom, yto, zfrom, zto, ap
             self.__init_from_vals__( *vals )
@@ -808,9 +878,15 @@ class OFracGrid():
             del self._fx[i]
 
     def getFxCount(self):
+        """Return the number of fractures."""
         return len(self._fx)
 
     def getFxCounts(self):
+        """Return a 3-tuple the number of fractures in each orientation.
+
+        The 3-tuple has the order (N_yz,N_xz,N_xy), where the index in the tuple
+        is the index of the axis perpendicular to the fracture.
+        """
         return tuple(self._ocounts)
 
     def getHeader(self):

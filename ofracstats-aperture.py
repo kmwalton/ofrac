@@ -11,7 +11,7 @@ import argparse,sys,os,re,copy,traceback,glob,datetime
 from itertools import count,accumulate
 from decimal import Decimal
 from bisect import bisect
-from math import log10
+from math import log10,sqrt
 
 import numpy as np
 from scipy.stats import describe,gmean
@@ -23,26 +23,9 @@ from ofracs import OFracGrid,NotValidOFracGridError
 
 __VERBOSITY__ = 0
 
+
 # create a list of parser types
-parserOptions = [ OFracGrid.PickleParser, ]
-
-try:
-    import parser_fractran
-    parserOptions += list(parser_fractran.iterFractranParsers())
-except ImportError as e:
-    print("Warning: did not find 'parser_fractran'. Cannot parse FRACTRAN-type orthogonal fracture networks.", file=sys.stderr)
-
-try:
-    import parser_rfgen
-    parserOptions += [ parser_rfgen.RFGenOutFileParser, ]
-except ImportError as e:
-    print("Warning: did not find 'parser_rfgen'. Cannot parse RFGen-type orthogonal fracture networks.", file=sys.stderr)
-
-try:
-    import parser_hgs_rfgeneco
-    #parserOptions += list(parser_hgs_rfgeneco.??? )
-except ImportError as e:
-    print("Warning: did not find 'parser_hgs_rfgeneco'. Cannot parse HGS+RFGen-style orthogonal fracture networks.", file=sys.stderr)
+parserOptions = ofracs.populate_parsers()
 
 
 __VERBOSITY__ = 0
@@ -55,14 +38,18 @@ class Binner:
 
 
     def __init__(self, files, bins):
-    """
-        Arguments:
-            files : list-like
-                A list of file names of ofracs-parsable DFNs. These will be
-                merged.
-            bins : list-like
-                A list of strings representing aperture values in units microns
-    """
+        """
+
+            Arguments:
+
+                files : list-like
+                    A list of file names of ofracs-parsable DFNs. These will be
+                    merged.
+
+                bins : list-like
+                    A list of strings representing aperture values in units
+                    microns.
+        """
         toM = Decimal('1e-6')
         self.bins = list(map(lambda v:v*toM, sorted(map(Decimal,bins))))
 
@@ -121,28 +108,37 @@ class Binner:
         # default
         (N,(apMin,apMax),mean,variance,skewness,kurtosis) = \
             (0,(0.,0.), 0.,0.,0.,0.,)
+        (lognormalmean, lognormalvar) = (0.,0.)
+        logfunc = np.log10
 
         # population of apertures to be described
         aps = np.fromiter(
                 map( lambda f: f.ap, self.grid.iterFracs()),
                 dtype=np.float_)
 
+
         # degenerate population
         if aps.size == 1:
             ap = aps[0]
             (N,(apMin,apMax),mean,variance,skewness,kurtosis) = \
-                (1,(ap,ap), ap,0.,0.,0.,)
+                (1,(ap,ap),ap,0.,0.,0.,)
+            lognormalmean = logfunc(mean)
+
         # normal case
         elif aps.size > 1:
             (N,(apMin,apMax),mean,variance,skewness,kurtosis) = describe(aps)
+            (_z,(_a,_b), lognormalmean, lognormalvar, _c, _d) = \
+                describe(logfunc(aps))
 
         self.descStats = {
-                'N':N,
-                'Arithmetic mean':mean,
-                'Geometric mean':gmean(aps),
-                'Variance':variance,
+            'N':N,
+            'Arithmetic mean':mean,
+            'Geometric mean':gmean(aps),
+            'Variance':variance,
             'Skewness':skewness,
             'Max. Frequency':max(self.freq),
+            'lognormal mean':lognormalmean,
+            'lognormal var':lognormalvar,
         }
 
         # cumulative density function
@@ -170,15 +166,46 @@ class Binner:
         s += f'''ZONE T="{self.grid.strDomFromTo()}" I={len(self.bins)+1}\n'''
 
         # aux data
+        logn_mu = self.descStats["lognormal mean"]
+        logn_sigma = sqrt(self.descStats["lognormal var"])
+
+        auxd = {
+            'N':(f'{self.descStats["N"]}',''),
+            'ARITHMETICMEAN': (
+                f'{self.descStats["Arithmetic mean"]*1e6:.0f}',
+                'Arithmetic mean in microns' ),
+            'GEOMETRICMEAN':(
+                f'{self.descStats["Geometric mean"]*1e6:.0f}',
+                'Geometric mean in microns' ),
+            'VARIANCE':(f'{self.descStats["Variance"]:.4g}',''),
+            'SKEWNESS':(f'{self.descStats["Skewness"]:.4g}',''),
+            'FREQ_MAX':(
+                f'{self.descStats["Max. Frequency"]:.4g}',
+                'The frequency in the bin with the highest frequency'),
+            'LOGNORMMEAN': (
+                 f'{self.descStats["lognormal mean"]:.4g}',
+                 'Mean value calculated after log10-ing the sample' ),
+            'LOGNORMVAR': (
+                 f'{self.descStats["lognormal var"]:.4g}',
+                 'Variance value calculated after log10-ing the sample' ),
+
+            'MU_LOGN':(
+                f'{10**(6+self.descStats["lognormal mean"]):.0f}',
+                'Mean of the base-10 lognormal distribution in um'),
+            'SPREAD_LOGN':(
+                f'{10**(6+logn_mu-logn_sigma):.0f}..' \
+                f'{10**(6+logn_mu+logn_sigma):.0f}',
+                'Lognormal mean +/- one lognorm std.dev. in um'),
+            
+            'REGION':(f'{self.grid.strDomFromTo()}',''),
+            'DATAFILES':(f'{",".join(self.datafns)}',''),
+        }
+
         # nice values for the descStats
-        s += f'AUXDATA N="{self.descStats["N"]}"\n'
-        s += f'AUXDATA ARITHMETICMEAN="{self.descStats["Arithmetic mean"]*1e6:.0f}"\n'
-        s += f'AUXDATA GEOMETRICMEAN="{self.descStats["Geometric mean"]*1e6:.0f}"\n'
-        s += f'AUXDATA VARIANCE="{self.descStats["Variance"]:.4g}"\n'
-        s += f'AUXDATA SKEWNESS="{self.descStats["Skewness"]:.4g}"\n'
-        s += f'AUXDATA FREQ_MAX="{self.descStats["Max. Frequency"]:.4g}"\n'
-        s += f'AUXDATA REGION="{self.grid.strDomFromTo()}"\n'
-        s += f'''AUXDATA DATAFILES="{','.join(self.datafns)}"\n'''
+        for k,(v,comm) in auxd.items():
+            if comm:
+                s += f'# {comm}:\n'
+            s += f'AUXDATA {k}="{v}"\n'
 
         # zone data
         n = self.descStats["N"]
