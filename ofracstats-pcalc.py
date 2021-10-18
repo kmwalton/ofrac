@@ -57,7 +57,12 @@ TODO: - reimplemnt superposition of FILES
 
 """
 
-import argparse,sys,re,copy,traceback,glob
+import argparse
+import sys
+import re
+import copy
+import traceback
+import glob
 import multiprocessing
 from random import random
 from random import uniform
@@ -317,7 +322,7 @@ class FractureZone:                                         #{{{
 
          if __VERBOSITY__ > 1:
 
-             s = 'P10-{} for scanline at ({},{})=({:.3f},{:.3f})'.format(
+            s = 'P10-{} for scanline at ({},{})=({:.3f},{:.3f})'.format(
                      dScanLine,
                      PERP[dScanLine][0], PERP[dScanLine][1],
                      c1, c2,
@@ -327,11 +332,13 @@ class FractureZone:                                         #{{{
 
             dens = float(count)/m
             spac = float('inf')
-            if count > 0: spac = 1.0/dens
-             print( "{}: {:6.3g}/m {:6.3g}m (count={})".format(
+
+            if count > 0:
+                spac = 1.0/dens
+            print( "{}: {:6.3g}/m {:6.3g}m (count={})".format(
                       s, dens, spac, count, w=cMag ) )
  
-             if __VERBOSITY__ > 2:
+            if __VERBOSITY__ > 2:
                  s = 'Fractures found:\n'
                  w = int(log10(len(self.fracs)))
                  for iff,ff in enumerate(filter( 
@@ -374,8 +381,15 @@ class FractureZone:                                         #{{{
          # if the truncate flag is set, truncate as necessary.
          if hasattr(self.zn,'truncateToZone') and self.zn.truncateToZone:
             fobj = OFrac(*f[0])
-            fobj.truncate(self.zn.start(), self.zn.end())
-            f = ofrac2ftuple(fobj)
+            try:
+                fobj.truncate(self.zn.start(), self.zn.end())
+            except (FractureCollapseError, FractureCollapseWarning) as e:
+                f = None
+            else:
+               f = ofrac2ftuple(fobj)
+
+         if f is None:
+             continue
 
          o = INDO[f[1]]
          d1 = DIR[o[0]]
@@ -663,17 +677,16 @@ def doEverything(args, batchDir=''):
 
             for (izn, zn) in enumerate(sampleZn):
 
-               fzn = FractureZone(zn,fracs)
-               fzn.setNScan(args.n)
+                fzn = FractureZone(zn,fracs)
+                fzn.setNScan(args.n)
 
-               results.append( pool.map( calcAndCalcFormatter, chain(
-                      [(fzn.formatP10, fzn.P10, d,) for d in sorted(DIR)],
-                      [(fzn.formatP20, fzn.P20, d,) for d in sorted(DIR)],
-                      [(fzn.formatP22, fzn.P22, d,) for d in sorted(DIR)],
-                      [(fzn.formatP30, fzn.P30, None,),
-                       (fzn.formatP33, fzn.P33, None,),]
-                     )
-                  ))
+                results.append( pool.map( calcAndCalcFormatter, chain(
+                    [(fzn.formatP10, fzn.P10, d,) for d in sorted(DIR)],
+                    [(fzn.formatP20, fzn.P20, d,) for d in sorted(DIR)],
+                    [(fzn.formatP22, fzn.P22, d,) for d in sorted(DIR)],
+                    [(fzn.formatP30, fzn.P30, None,),
+                     (fzn.formatP33, fzn.P33, None,),]
+                )))
 
 
     # get ready for batch printing
@@ -719,53 +732,53 @@ Sample Zones:
 
     for (izn, zn) in enumerate(sampleZn):
 
-       r = results[izn]
+        r = results[izn]
 
-           if args.batch_dir:
-                if batchDir == args.batch_dir[0]:
-                    print(header)
-                print(rowFmt.format(batchDir, izn,
-                               # pick out just the P10s
+        if args.batch_dir:
+            if batchDir == args.batch_dir[0]:
+                print(header)
+            print(rowFmt.format(batchDir, izn,
+                           # pick out just the P10s
                            r[0][0][1],
                            r[1][0][1],
                            r[2][0][1],) )
 
-           else:
-                print( "--- {} ---".format(str(zn) ) )
+        else:
+            print( "--- {} ---".format(str(zn) ) )
                 # print results
-           print('\n'.join( map(lambda v:v[1](v[0]), r)))
+            print('\n'.join( map(lambda v:v[1](v[0]), r)))
 
 
-           # zone header
-           tecout += f'''ZONE T="{zn!s}" ZONETYPE=ORDERED I=2 J=2 K=2 DATAPACKING=BLOCK\n'''
-           # Auxvar
-           for i,d in enumerate(sorted(DIR)):
-               tecout += f'''AUXDATA P10{d}="{r[i][0][1]:.3f}"\n'''
+            # zone header
+            tecout += f'''ZONE T="{zn!s}" ZONETYPE=ORDERED I=2 J=2 K=2 DATAPACKING=BLOCK\n'''
+            # Auxvar
+            for i,d in enumerate(sorted(DIR)):
+                tecout += f'''AUXDATA P10{d}="{r[i][0][1]:.3f}"\n'''
 
-           #import pdb ; pdb.set_trace()
-           tecout += f'''AUXDATA P33="{r[10][0]:.3g}"\n'''
-
-
+            #import pdb ; pdb.set_trace()
+            tecout += f'''AUXDATA P33="{r[10][0]:.3g}"\n'''
 
 
-                # length stats ... P21???
-                lengths = fzn.lengths()
-                for os in sorted(DIR):
-                   if lengths[os]['COUNT']>0:
-                      print( "%s-length: min=%7.3f max=%7.3fm avg=%7.3fm (count=%4d)" % 
+
+
+            # length stats ... P21???
+            lengths = fzn.lengths()
+            for os in sorted(DIR):
+                if lengths[os]['COUNT']>0:
+                    print( "%s-length: min=%7.3f max=%7.3fm avg=%7.3fm (count=%4d)" %
                          (os, lengths[os]['MIN'], lengths[os]['MAX'],
                           lengths[os]['SUM'] / lengths[os]['COUNT'], lengths[os]['COUNT'] ) )
-                   else:
-                      print( "%s-length:         (count=%4d)" % (os, 0) )
+                else:
+                    print( "%s-length:         (count=%4d)" % (os, 0) )
 
-           #ZONE data
-           #import pdb ; pdb.set_trace()
-           coordBlks = [ '', '', '', ]
-           for z,y,x in product(*reversed(zn.c)):
-               coordBlks[0] += f' {x:11.3f}'
-               coordBlks[1] += f' {y:11.3f}'
-               coordBlks[2] += f' {z:11.3f}'
-           tecout += ''.join(f'# {d}\n{v[1:]}\n' for d,v in zip('xyz',coordBlks))
+            #ZONE data
+            #import pdb ; pdb.set_trace()
+            coordBlks = [ '', '', '', ]
+            for z,y,x in product(*reversed(zn.c)):
+                coordBlks[0] += f' {x:11.3f}'
+                coordBlks[1] += f' {y:11.3f}'
+                coordBlks[2] += f' {z:11.3f}'
+            tecout += ''.join(f'# {d}\n{v[1:]}\n' for d,v in zip('xyz',coordBlks))
 
     if 'tp_out' in args and args.tp_out: # not None or ''
         if __VERBOSITY__:
