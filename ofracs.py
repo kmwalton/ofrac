@@ -672,7 +672,17 @@ class OFracGrid():
         self._gridValid = False
 
     def setDomainSize(self, domainOr, domSz):
-        """Set the domain size, possibly exclude gridlines and fractures"""
+        """Set the domain size, possibly exclude gridlines and fractures
+
+        Arguments:
+            domainOr : list-like
+                Three numbers representing the new (x,y,z)-origin
+            domSz : list-like
+                Three numbers representing the new domain size (|x|,|y|,|z|)
+        """
+
+        domainOr = toDTuple(domainOr)
+        domSz = toDTuple(domSz)
 
         self._setDomain(domainOr, domSz)
 
