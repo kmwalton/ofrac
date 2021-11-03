@@ -22,7 +22,7 @@ import sys,warnings,copy,re,os,pickle
 import decimal
 from decimal import Decimal,getcontext
 from bisect import bisect_left,bisect_right
-from math import log10,floor,ceil
+from math import log10,floor,ceil,prod
 from itertools import chain,count
 
 def populate_parsers():
@@ -769,6 +769,49 @@ class OFracGrid():
             else:                         return sum(aList)
 
         return tuple( map( sumInfGuarded, zip(self.domainOrigin,self.domainSize) ) )
+
+    def scale(self, s):
+        """Scale all gridlines and fractures.
+
+        Arguments:
+            s : list-like
+                Three components of the scaling magnitude.
+        """
+        
+        s = toDTuple(s)
+
+        for ax,sc in enumerate(s):
+           if sc == Decimal('0'):
+                raise ValueError(f'Found scaling of zero in {"xyz"[ax]}')
+
+        # move fractures
+        for f in self._fx:
+            newd = 6*[ None, ]
+            for i,sc in zip(count(start=0,step=2),s):
+                newd[i  ] = f.d[i  ]*sc
+                newd[i+1] = f.d[i+1]*sc
+            f.d = tuple(newd)
+
+        self.domainOrigin = toDTuple(map(prod,zip(self.domainOrigin,s)))
+        self.domainSize = toDTuple(map(prod,zip(self.domainSize,s)))
+
+        # move grid
+        for ax,sc in enumerate(s):
+
+            # move mins and maxes
+            self._mima[ax][0] *= sc
+            self._mima[ax][1] *= sc
+
+            # times-equals
+            def te(v):
+                return v*sc
+
+            # move fixed gridlines
+            self._fixedgl[ax] = set(map(te,self._fixedgl[ax]))
+
+            # move gridlines, inplace
+            self._gl[ax][:] = map(te,self._gl[ax])
+
 
     def translate(self, t):
         """Translate all gridlines and fractures.
