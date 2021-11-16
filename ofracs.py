@@ -288,6 +288,7 @@ class OFrac():
         return '({:{w}}->{:{w}}, {:{w}}->{:{w}}, {:{w}}->{:{w}}), ap='.format(
                 *self.d, w=wid)+str(self.ap)
 
+
     def asRFGenStr(self,i=None):
         wid = 8
         s= '      '
@@ -299,8 +300,7 @@ class OFrac():
         return s
 
     def __repr__(self):
-        # TODO output more grungy details here
-        return self.__str__()
+        return f'<{type(self)} at {self.id()}>'
 
     def nudge(self, nudgeIncrement):
         """Modify a fracture to new "nudged" coordinates."""
