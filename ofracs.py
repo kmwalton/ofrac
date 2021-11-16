@@ -788,8 +788,8 @@ class OFracGrid():
         for f in self._fx:
             newd = 6*[ None, ]
             for i,sc in zip(count(start=0,step=2),s):
-                newd[i  ] = f.d[i  ]*sc
-                newd[i+1] = f.d[i+1]*sc
+                newd[i  ] = D_CO(f.d[i  ]*sc)
+                newd[i+1] = D_CO(f.d[i+1]*sc)
             f.d = tuple(newd)
 
         self.domainOrigin = toDTuple(map(prod,zip(self.domainOrigin,s)))
@@ -799,12 +799,12 @@ class OFracGrid():
         for ax,sc in enumerate(s):
 
             # move mins and maxes
-            self._mima[ax][0] *= sc
-            self._mima[ax][1] *= sc
+            for i in range(2):
+                self._mima[ax][i] = D_CO(self._mima[ax][i]*sc)
 
             # times-equals
             def te(v):
-                return v*sc
+                return D_CO(v*sc)
 
             # move fixed gridlines
             self._fixedgl[ax] = set(map(te,self._fixedgl[ax]))
