@@ -1077,8 +1077,12 @@ class OFracGrid():
     def refineNearFx(self, refList):
         """Add gridlines at specified distance(s) away from fracture planes
 
-        Deletes all grid lines.
-        Remakes them at fracture planes, plus specified refinements.
+        Arguments:
+            refList : list-like
+                A sequence of cell sizes away from the fracture plane. e.g., a
+                Fracture at 'F' and refList [ 'a', 'b', 'c' ] will have 7
+                resultant grid lines F-(a+b+c), F-(a+b), F-a, F, F+a, F+a+b, and
+                F+a+b+c.
         """
 
         # error check inputs
@@ -1091,10 +1095,7 @@ class OFracGrid():
         for i in range(1, len(refList)):
             refList[i] += refList[i-1]
 
-        # forget all current grid lines
-        # remake grid to fit fractures
-        self._remakeGridLineLists( keep_glAsSets=True )
-        glSets = self._gl
+        glSets = [ set(gll) for gll in self._gl ]
 
         beforeCounts = self.getGridLineCounts()
 
