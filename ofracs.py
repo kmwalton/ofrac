@@ -1020,6 +1020,26 @@ class OFracGrid():
                 return False
         return True
 
+    def addRegularGlSpacing(self, spacing):
+        """Add grid lines at regular intervals from the domainOrigin
+
+        Arguments:
+            spacing : list-like
+                3-length list of the regular spacing increments
+        """
+
+        glSets = [ set(gll) for gll in self._gl ]
+
+        for i,gls in enumerate(glSets):
+            o = self.domainOrigin[i]
+            s = spacing[i]
+            ngl = int(floor(float(self.domainSize[i])/s))
+
+            s = D_CO(s)
+            gls.update( [ o+igl*s for igl in range(1, ngl) ] )
+
+        self._gl = [ list(sorted(gls)) for gls in glSets ]
+
     def setMaxGlSpacing( self, maxGlSpacing ):
         """Add new gridlines so that the maximum space between is respected
 
