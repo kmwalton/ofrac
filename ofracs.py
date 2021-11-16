@@ -133,7 +133,7 @@ DINF = Decimal('infinity')
 
 def toDTuple(s):
     """Return a tuple of coordinate precision Decimals
-        
+
     Arguments:
         s : str or list-like
             strs must look like a list of numbers tuple, like '(x,y,z)',
@@ -150,7 +150,7 @@ def toDTuple(s):
     else:
         raise ValueError(f'"toDTuple" expected string or list-like, but got '
                 '{type(s)}.')
-    
+
     return tuple( D_CO(v) for v in ivals )
 
 def numTuple2str( somedt, sep=',', start='(', end=')' ):
@@ -262,7 +262,7 @@ class OFrac():
     @staticmethod
     def determineFracOrientation(f):
         """return 0 for yz-plane, 1 for xz, 2 for xy
-            
+
         Why this arbitrary assignment? The return value is the index into the
         string 'xyz' that you can remove to get a string describing the parallel
         plane.
@@ -311,7 +311,7 @@ class OFrac():
 
         def myNudger(v):
             return nudge(v,nudgeIncrement)
-        
+
         newd = tuple(map(myNudger, self.d))
 
         try:
@@ -337,7 +337,7 @@ class OFrac():
 
     def truncate(self, s, e):
         """Modify a fracture's size to fit within a given bounding box
-            
+
         s - the minimum coordinate of the bounding box (numeric-type triple)
         e - the maximum coordinate of the bounding box (numeric-type triple)
 
@@ -350,7 +350,7 @@ class OFrac():
         domTruncStr = "truncating to ({})->({})".format(
            ','.join(str(s) for v in s),
            ','.join(str(s) for v in e) )
-        
+
         newd = []
         for a,((v1,v2),mi,ma) in enumerate(zip(iterpairs(self.d), s, e)) :
             if v1 == v2 and ( v1 < mi or v1 > ma ):
@@ -424,10 +424,10 @@ class OFracGrid():
             fixedgl=[]
         ):
         """Initialize a network
-        
+
         domainOrigin and domainSize, if specified, will override and filter-out
         any fractures or gridlines passed in the other parameter lists.
-            
+
         """
 
         self._fx = []
@@ -441,9 +441,9 @@ class OFracGrid():
             domainOrigin = toDTuple(domainOrigin)
         if domainSize is not None:
             domainSize = toDTuple(domainSize)
-        
+
         self._setDomain(domainOrigin, domainSize)
-        
+
         self._ocounts=[0,0,0]
         self._resetMinMax()
 
@@ -518,7 +518,7 @@ class OFracGrid():
 
         # re-make the domain origin again (in the case that it wasn't provided
         # initially), presuming that the fracture network and fixed grid lines
-        # provide what the users' choices here give the proper size 
+        # provide what the users' choices here give the proper size
         if domainOrigin == None and ( fixedgl or fx ):
             self.domainOrigin=tuple(D_CO(a[0]) for a in self._mima)
         if domainSize == None and ( fixedgl or fx ):
@@ -701,7 +701,7 @@ class OFracGrid():
                         print(message, file=sys.stderr)
             if __VERBOSITY__ and len(glsToRemove)>0:
                 print("Removed {} user-specifed gridlines in {}".format(len(glsToRemove),'xyz'[a]), file=sys.stderr)
-                
+
             self._fixedgl[a] -= glsToRemove
 
         # add gridlines representing the size
@@ -724,7 +724,7 @@ class OFracGrid():
 
             # store-back to self
             self._gl[a] = gla
-                
+
         self._resetMinMax()
         self._remakeMinMax(useFixedGrid=True, useGrid=True)
 
@@ -777,7 +777,7 @@ class OFracGrid():
             s : list-like
                 Three components of the scaling magnitude.
         """
-        
+
         s = toDTuple(s)
 
         for ax,sc in enumerate(s):
@@ -861,7 +861,7 @@ class OFracGrid():
 
 
 
-# methods for fractures        
+# methods for fractures
     def addFracture( self, candidateOFrac, index=-1 ):
         """Add a given OFrac fracture object"""
         self._cbValid = False
@@ -921,7 +921,7 @@ class OFracGrid():
         for a in range(3):
             newGL = set(map(nudger, self._gl[a]))
             newGL.update(self._fixedgl[a])
-            self._gl[a] = sorted(newGL) 
+            self._gl[a] = sorted(newGL)
 
         failedNudges = []
         for i,of in enumerate(self._fx):
@@ -998,7 +998,7 @@ class OFracGrid():
         """Scan grid lines to determine if spacing is uniform"""
         if not self._gridValid:
             raise RuntimeError(
-                    "isUniformGridSpacing "
+                    "isUniformGridSpacing " \
                     "called when _gridValid == False")
             #self._remakeGridLineLists()
 
@@ -1022,7 +1022,7 @@ class OFracGrid():
 
     def setMaxGlSpacing( self, maxGlSpacing ):
         """Add new gridlines so that the maximum space between is respected
-        
+
         maxGlSpacing = [ maxX, maxY, maxZ ]
         """
 
@@ -1052,11 +1052,11 @@ class OFracGrid():
             self._gl[a] = newGl[:]
 
         self._gridValid = True
-            
+
 
     def refineNearFx(self, refList):
         """Add gridlines at specified distance(s) away from fracture planes
-            
+
         Deletes all grid lines.
         Remakes them at fracture planes, plus specified refinements.
         """
@@ -1118,7 +1118,7 @@ class OFracGrid():
             for v in i:
                 p*=v
             return p
-        
+
         stuff = {
             "Size":self.strDomFromTo(),
 
@@ -1162,10 +1162,10 @@ class OFracGrid():
             print(f'DATASETAUXDATA {k} = "{v}"')
 
         # chunks of info for the header string
-        znHdrString = ( f'ZONE T="{zoneName}"', 
+        znHdrString = ( f'ZONE T="{zoneName}"',
             'ZONETYPE=FEQUADRILATERAL DATAPACKING=BLOCK',
             f'NODES={_n} ELEMENTS={_e}',
-            'VARLOCATION=([4]=CELLCENTERED)', 
+            'VARLOCATION=([4]=CELLCENTERED)',
             f'AUXDATA numFracs = "{_e}"'
             )
         print(' '.join(znHdrString))
@@ -1180,7 +1180,7 @@ class OFracGrid():
                 blockVals[0][4*iel+ino] = x
                 blockVals[1][4*iel+ino] = y
                 blockVals[2][4*iel+ino] = z
-                
+
 
         # print x y z-blocks
         for ia,a in enumerate('xyz'):
