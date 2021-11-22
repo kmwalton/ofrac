@@ -1338,9 +1338,13 @@ class OFracGrid():
         return newGrid
 
     @staticmethod
-    def pickleTo( ofracObj, filename ):
-        with open(filename, 'wb') as fout:
-            pickle.dump(ofracObj, fout, pickle.HIGHEST_PROTOCOL)
+    def pickleTo( ofracObj, f ):
+        """Dump to the given filename/file"""
+        if type(f) in [ str, os.PathLike ]:
+            with open(f, 'wb') as fout:
+                pickle.dump(ofracObj, fout, pickle.HIGHEST_PROTOCOL)
+        else:
+            pickle.dump(ofracObj, f, pickle.HIGHEST_PROTOCOL)
 
     @staticmethod
     def unpickleFrom( filename ):
