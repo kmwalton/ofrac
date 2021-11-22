@@ -1025,20 +1025,31 @@ class OFracGrid():
 
         Arguments:
             spacing : list-like
-                3-length list of the regular spacing increments
+                3-length list of the regular spacing increments. List items that
+                are 'None' or zero will cause no change in grid lines in that
+                axis.
         """
 
-        glSets = [ set(gll) for gll in self._gl ]
+        for i in range(len(self._gl)):
 
-        for i,gls in enumerate(glSets):
+            # allow for no change
+            if not spacing[i]:
+                continue
+
+            # error check
+            s = float(spacing[i])
+            if s < 0.0:
+                raise ValueError('Spacing cannot be less than zero')
+
+            gls = set(self._gl[i])
+
             o = self.domainOrigin[i]
-            s = spacing[i]
             ngl = int(floor(float(self.domainSize[i])/s))
 
             s = D_CO(s)
             gls.update( [ o+igl*s for igl in range(1, ngl) ] )
 
-        self._gl = [ list(sorted(gls)) for gls in glSets ]
+            self._gl[i] = list(sorted(gls))
 
     def setMaxGlSpacing( self, maxGlSpacing ):
         """Add new gridlines so that the maximum space between is respected
