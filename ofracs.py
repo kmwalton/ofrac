@@ -913,6 +913,8 @@ class OFracGrid():
         Removes fractures or fails depending on __FX_COLLAPSE_POLICY__
         """
 
+        _gvsave = self._gridValid
+
         nudgeInc = D_CO(nudgeTo)
 
         def nudger(v):
@@ -929,6 +931,11 @@ class OFracGrid():
 
         for i in reversed(failedNudges):
             del self._fx[i]
+
+        # A side-effect of nudging fractures is that the grid becomes invalid.
+        # Because we just nudged the grid lines, the grid is ok now only if it
+        # was ok before nudging.
+        self._gridValid = _gvsave
 
     def getFxCount(self):
         """Return the number of fractures."""
