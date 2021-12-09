@@ -44,7 +44,7 @@ def populate_parsers():
                 file=sys.stderr)
 
     try:
-        import parser_rfgen
+        import pyhgs.parser.rfgen as parser_rfgen
         ret += [ parser_rfgen.RFGenOutFileParser, ]
     except ImportError as e:
         print("Warning: did not find 'parser_rfgen'. Cannot parse " \
