@@ -52,10 +52,10 @@ def populate_parsers():
                 file=sys.stderr)
 
     try:
-        import parser_hgs_rfgeneco
-        #parserOptions += list(parser_hgs_rfgeneco.??? )
+        import pyhgs.parser.hgseco
+        ret += [pyhgs.parser.hgseco.HGSEcoFileParser,]
     except ImportError as e:
-        print("Warning: did not find 'parser_hgs_rfgeneco'. Cannot parse "\
+        print("Warning: did not find 'pyhgs.parser.hgseco'. Cannot parse "\
                 "HGS+RFGen-style orthogonal fracture networks.",
                 file=sys.stderr)
 
