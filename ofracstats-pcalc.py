@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Calculates "P-- system" values for orthogonal fracture networks.
 
 DETAILED DESCRIPTION
