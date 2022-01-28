@@ -36,7 +36,7 @@ def populate_parsers():
     ret = [ OFracGrid.PickleParser, ]
 
     try:
-        import parser_fractran
+        import pyhgs.parser.fractran as parser_fractran
         ret += list(parser_fractran.iterFractranParsers())
     except ImportError as e:
         print("Warning: did not find 'parser_fractran'. Cannot parse " \
