@@ -64,6 +64,7 @@ import copy
 import traceback
 import glob
 import os
+import datetime
 import multiprocessing
 from random import uniform
 from math import log10
@@ -703,7 +704,11 @@ Sample Zones:
 
 
     # get ready for tecplot printing
-    tecout = '''VARIABLES="X","Y","Z"\n'''
+    import os
+    tecout = ''
+    tecout += f'# {os.path.realpath(__file__)} on {datetime.datetime.now()}\n'
+    tecout += 'VARIABLES="X","Y","Z"\n'
+    tecout += '\n'
 
     for (izn, zn) in enumerate(sampleZn):
 
