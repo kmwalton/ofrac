@@ -492,17 +492,23 @@ class FractureZone:                                         #{{{
       return len(self.fracs) / self.zn.vol()
 
    def formatP30(self, p30data):
+       nfx=len(self.fracs) # not ideal to recalculate this
        if self.zn.vol() > 1.0e-6:
-          return "P30:    {:12.3f} /m^3".format(p30data)
+          return "P30:    {:12.3f} /m^3  (count={:6d}, V={:4.1f}m^3)".format(
+                      p30data, nfx, self.zn.vol())
 
    def P33(self):
       if self.zn.vol() == 0:
          return float('inf')
       return sum( map( FractureZone.fracVol, self.fracs ) ) / self.zn.vol()
 
-   def formatP33(self, p33Data):
+   def formatP33(self, p33Data, fxV=None):
+      if fxV is None:
+         fxV = sum( map( FractureZone.fracVol, self.fracs ) )
+
       if self.zn.vol() > 1.0e-6:
-         return "P33:    {:12.5g}".format(p33Data)
+         return "P33:    {:12.5g}  (V={:.5g}m^3 / V={:4.1f}m^3)".format(
+                      p33Data, fxV, self.zn.vol())
 
 
 #}}}
