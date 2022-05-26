@@ -134,6 +134,15 @@ class LengthBinner(OFracBinner):
                     length_data[i],
                     bins = self.bins+[1e308])[0]
 
+            if len(length_data[i]) == 0:
+                self.auxd[c].extend( [
+                    ('N',0,''),
+                    ('ARITHMETICMEAN',f'-',''),
+                    ('GEOMEAN',f'-',''),
+                    ('MIN_MAX',f'-..-',''),
+                ] )
+                continue
+
             stats = scipy.stats.describe(length_data[i])
             gmean = scipy.stats.gmean(length_data[i])
 
@@ -162,7 +171,9 @@ class LengthBinner(OFracBinner):
             n = np.sum(self.histo[c])
             for ibin,f in zip(count(1),self.histo[c]):
                 c = 0.
-                normf = f/n
+                normf = 0.
+                if n > 0.:
+                    normf = f/n
                 s += f'{ibin:<2d} {f:10d} {c:10.6f} {normf:10.6f}\n'
 
 
