@@ -45,7 +45,10 @@ def populate_parsers():
 
     try:
         import pyhgs.parser.rfgen as parser_rfgen
-        ret += [ parser_rfgen.RFGenOutFileParser, ]
+        ret += [
+            parser_rfgen.RFGenOutFileParser,
+            parser_rfgen.RFGenFracListParser,
+        ]
     except ImportError as e:
         print("Warning: did not find 'parser_rfgen'. Cannot parse " \
                 "RFGen-type orthogonal fracture networks.",
