@@ -17,6 +17,7 @@ CURRENTLY IMPLEMENTED MEASURES
    P20 - areal fracture density, unbiased counts per square metre
    P30 - volumetric fracture density, counts per cubic metre
    P22 - porosity, area of fractures (aperture * length) per unit area sampled
+   P32 - fracture area per unit sampled volume.[Σ(length_1*length_2)]/volume_total
    P33 - porosity, volume of fractures (aperture * length * length) per unit
          volume sampled
 
@@ -393,6 +394,13 @@ class FractureZone:                                         #{{{
           'z':{'MIN':minlength[2], 'MAX':maxlength[2], 'SUM':lengths[2][0], 'COUNT':lengths[2][1]} }
 
    @staticmethod
+   def fracArea(f):
+      os = INDO[f[1]] # orientation string, e.g. 'xy'
+      d1ind = 2*DIR[os[0]]
+      d2ind = 2*DIR[os[1]]
+      return ( f[0][d1ind+1] - f[0][d1ind] ) * ( f[0][d2ind+1] - f[0][d2ind] )
+
+   @staticmethod
    def fracVol(f):
       os = INDO[f[1]] # orientation string, e.g. 'xy'
       d1ind = 2*DIR[os[0]]
@@ -496,6 +504,23 @@ class FractureZone:                                         #{{{
        if self.zn.vol() > 1.0e-6:
           return "P30:    {:12.3f} /m^3  (count={:6d}, V={:4.1f}m^3)".format(
                       p30data, nfx, self.zn.vol())
+
+   def P32(self):
+      if self.zn.vol() == 0:
+         return float('inf')
+
+      if not hasattr(self,'_fxA'):
+          self._fxA = sum(map(FractureZone.fracArea, self.fracs))
+
+      return  self._fxA/self.zn.vol()
+
+   def formatP32(self, p32Data, fxA=None):
+      if fxA is None and not hasattr(self,'_fxA'):
+         self._fxA = sum( map( FractureZone.fracArea, self.fracs ) )
+
+      if self.zn.vol() > 1.0e-6:
+         return "P32:    {:12.5g}  (V={:.5g}m^2 / V={:4.1f}m^3)".format(
+                      p32Data, self._fxA, self.zn.vol())
 
    def P33(self):
       if self.zn.vol() == 0:
@@ -656,7 +681,8 @@ def doEverything(args, batchDir=''):
                     [(fzn.formatP20, fzn.P20, d,) for d in sorted(DIR)],
                     [(fzn.formatP22, fzn.P22, d,) for d in sorted(DIR)],
                     [(fzn.formatP30, fzn.P30, None,),
-                    (fzn.formatP33, fzn.P33, None,),]
+                     (fzn.formatP32, fzn.P32, None,),
+                     (fzn.formatP33, fzn.P33, None,),]
                     )
                 )))
 
@@ -673,6 +699,7 @@ def doEverything(args, batchDir=''):
                     [(fzn.formatP20, fzn.P20, d,) for d in sorted(DIR)],
                     [(fzn.formatP22, fzn.P22, d,) for d in sorted(DIR)],
                     [(fzn.formatP30, fzn.P30, None,),
+                     (fzn.formatP32, fzn.P32, None,),
                      (fzn.formatP33, fzn.P33, None,),]
                 )))
 
