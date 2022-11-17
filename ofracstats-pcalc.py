@@ -198,6 +198,12 @@ class SpatialZone:            # {{{
       else:
          self.c = ( (0.0, end[0]), (0.0, end[1]), (0.0, end[2]) )
 
+      # normalize data types
+      self.c = ( (float(self.c[0][0]), float(self.c[0][1])),
+                 (float(self.c[1][0]), float(self.c[1][1])),
+                 (float(self.c[2][0]), float(self.c[2][1])),
+              )
+
       for (c1,c2) in self.c:
          if c2 < c1:
             raise Exception("Bad coordinates specified for this zone.")

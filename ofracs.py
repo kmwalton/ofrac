@@ -303,7 +303,7 @@ class OFrac():
         return s
 
     def __repr__(self):
-        return f'<{type(self)} at {self.id()}>'
+        return f'{type(self)} at {id(self):#x}'
 
     def nudge(self, nudgeIncrement):
         """Modify a fracture to new "nudged" coordinates."""
