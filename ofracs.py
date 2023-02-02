@@ -338,6 +338,20 @@ class OFrac():
 
         return returnstatus
 
+    class _Truncate_Op_Message:
+        """A class to make a string about truncation.
+        String formatting is done on-demand at time of use.
+        This avoids creating and formatting a string that is never used.
+        """
+        __slots__ = ['s', 'e',]
+        def __init__(self, s, e):
+            self.s = s
+            self.e = e
+        def __str__(self):
+            return "truncating to ({})->({})".format(
+               ','.join(str(v) for v in self.s),
+               ','.join(str(v) for v in self.e) )
+
     def truncate(self, s, e):
         """Modify a fracture's size to fit within a given bounding box
 
@@ -350,9 +364,7 @@ class OFrac():
         No error checking on valid inputs s and e!
         """
 
-        domTruncStr = "truncating to ({})->({})".format(
-           ','.join(str(s) for v in s),
-           ','.join(str(s) for v in e) )
+        domTruncStr = OFrac._Truncate_Op_Message(s,e)
 
         newd = []
         for a,((v1,v2),mi,ma) in enumerate(zip(iterpairs(self.d), s, e)) :
@@ -698,9 +710,9 @@ class OFracGrid():
             for gl in self._fixedgl[a]:
                 if gl < s[a] or e[a] < gl:
                     glsToRemove.add(gl)
-                    message = "User-specified gridline at {}={} is being removed!".format('xyz'[a],gl)
                     #warnings.warn(message,UserWarning)
                     if __VERBOSITY__ > 1:
+                        message = "User-specified gridline at {}={} is being removed!".format('xyz'[a],gl)
                         print(message, file=sys.stderr)
             if __VERBOSITY__ and len(glsToRemove)>0:
                 print("Removed {} user-specifed gridlines in {}".format(len(glsToRemove),'xyz'[a]), file=sys.stderr)
@@ -733,19 +745,14 @@ class OFracGrid():
 
         # truncate/readd fractures
         nNewFx = 0
-        nTruncMsgs = 0
-        truncMsgs = ''
+        truncMsgs = []
 
         for i,f in enumerate(self._fx):
             try:
                 f.truncate(s, e)
             except (FractureCollapseError,FractureCollapseWarning) as ce:
                 # capture a string listing which fractures were truncated
-                if nTruncMsgs == 0:
-                    truncMsgs = '\n'.join( ce.message.split('\n')[:2] )
-                else:
-                    truncMsgs += '\n'+ce.message.split('\n')[1]
-                nTruncMsgs += 1
+                truncMsgs.append(ce)
                 o = OFrac.determineFracOrientation(f)
                 self._ocounts[o] -= 1
             else:
@@ -761,9 +768,12 @@ class OFracGrid():
         # TODO: use warnings.warn
         if __VERBOSITY__:
             print( "{} fractures removed when domain size changed.".format(
-                    nTruncMsgs) )
+                    len(truncMsgs)) )
             if __VERBOSITY__ > 1:
-                print( truncMsgs )
+                _msg = '\n'.join( truncMsgs[0].message.split('\n')[:2] )
+                for m in truncMsgs[1:]:
+                    _msg += '\n'+m.message.split('\n')[1]
+                print( _msg )
 
 
     def getDomainEnd(self):
