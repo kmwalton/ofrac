@@ -968,11 +968,29 @@ class OFracGrid():
 
 # methods for grid lines
     def addGridline( self, axis, glvalue ):
-        """Add a gridline
+        """Add a gridline to the list of fixed gridlines.
 
-        If it is outside the domain, the domain becomes bigger."""
-        self._fixedgl[axis].add(D_CO(glvalue))
-        self._gridValid = False
+        If it is outside the domain, the domain becomes bigger.
+        """
+
+        # maintains status of _gridValid by inserting gridline in the correct
+        # spot in the  list of gridlines, and checking that the domain bounding
+        # box is still accurate
+
+        v = D_CO(glvalue)
+        self._fixedgl[axis].add(v)
+
+        if type(self._gl[axis]) == set:
+            self._gl[axis].update(v)
+        else:
+            i = bisect_left(self._gl[axis], v)
+            if i == len(self._gl[axis]):
+                self._gl[axis].append(v)
+            elif self._gl[axis][i] != v:
+                self._gl[axis].insert(i,v)
+
+        self._remakeMinMax(useFixedGrid=True)
+
 
     def getGridLineCounts(self):
         """Return a 3-tuple of counts grid lines"""
