@@ -37,30 +37,39 @@ def populate_parsers():
 
     try:
         import pyhgs.parser.fractran as parser_fractran
-        ret += list(parser_fractran.iterFractranParsers())
-    except ImportError as e:
+    except ModuleNotFoundError as e:
+        if 'pyhgs.parser.fractran' not in str(e):
+            raise e
         print("Warning: did not find 'parser_fractran'. Cannot parse " \
                 "FRACTRAN-type orthogonal fracture networks.",
                 file=sys.stderr)
+    else:
+        ret += list(parser_fractran.iterFractranParsers())
 
     try:
         import pyhgs.parser.rfgen as parser_rfgen
+    except ModuleNotFoundError as e:
+        if 'pyhgs.parser.rfgen' not in str(e):
+            raise e
+        print("Warning: did not find 'parser_rfgen'. Cannot parse " \
+                "RFGen-type orthogonal fracture networks.",
+                file=sys.stderr)
+    else:
         ret += [
             parser_rfgen.RFGenOutFileParser,
             parser_rfgen.RFGenFracListParser,
         ]
-    except ImportError as e:
-        print("Warning: did not find 'parser_rfgen'. Cannot parse " \
-                "RFGen-type orthogonal fracture networks.",
-                file=sys.stderr)
 
     try:
         import pyhgs.parser.hgseco
-        ret += [pyhgs.parser.hgseco.HGSEcoFileParser,]
-    except ImportError as e:
+    except ModuleNotFoundError as e:
+        if 'pyhgs.parser.hgseco' not in str(e):
+            raise e
         print("Warning: did not find 'pyhgs.parser.hgseco'. Cannot parse "\
                 "HGS+RFGen-style orthogonal fracture networks.",
                 file=sys.stderr)
+    else:
+        ret += [pyhgs.parser.hgseco.HGSEcoFileParser,]
 
     return ret
 
