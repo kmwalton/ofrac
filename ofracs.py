@@ -18,7 +18,12 @@ Licenced under GNU GPLv3
 Documentation intended to work with pdoc3.
 """
 
-import sys,warnings,copy,re,os,pickle
+import sys
+import warnings
+import copy
+import re
+import os
+import pickle
 import decimal
 from decimal import Decimal,getcontext
 from bisect import bisect_left,bisect_right
@@ -37,30 +42,33 @@ def populate_parsers():
 
     try:
         import pyhgs.parser.fractran as parser_fractran
-        ret += list(parser_fractran.iterFractranParsers())
-    except ImportError as e:
-        print("Warning: did not find 'parser_fractran'. Cannot parse " \
+    except (ModuleNotFoundError, ImportError) as e:
+        print("Warning: did not find 'pyhgs.parser.fractran'. Cannot parse " \
                 "FRACTRAN-type orthogonal fracture networks.",
                 file=sys.stderr)
+    else:
+        ret += list(parser_fractran.iterFractranParsers())
 
     try:
         import pyhgs.parser.rfgen as parser_rfgen
+    except (ModuleNotFoundError, ImportError) as e:
+        print("Warning: did not find 'pyhgs.parser.rfgen'. Cannot parse " \
+                "RFGen-type orthogonal fracture networks.",
+                file=sys.stderr)
+    else:
         ret += [
             parser_rfgen.RFGenOutFileParser,
             parser_rfgen.RFGenFracListParser,
         ]
-    except ImportError as e:
-        print("Warning: did not find 'parser_rfgen'. Cannot parse " \
-                "RFGen-type orthogonal fracture networks.",
-                file=sys.stderr)
 
     try:
         import pyhgs.parser.hgseco
-        ret += [pyhgs.parser.hgseco.HGSEcoFileParser,]
-    except ImportError as e:
+    except (ModuleNotFoundError, ImportError) as e:
         print("Warning: did not find 'pyhgs.parser.hgseco'. Cannot parse "\
                 "HGS+RFGen-style orthogonal fracture networks.",
                 file=sys.stderr)
+    else:
+        ret += [pyhgs.parser.hgseco.HGSEcoFileParser,]
 
     return ret
 
@@ -69,7 +77,8 @@ def parse(file_name):
 
     errmsg = ''
     fxNet = None
-    for ParserClass in populate_parsers():
+    parsers_to_try = populate_parsers()
+    for ParserClass in parsers_to_try:
         try:
             parser = ParserClass(file_name)
             fxNet = parser.getOFracGrid()
@@ -90,6 +99,10 @@ def parse(file_name):
             break
 
     if not fxNet:
+        if len(parsers_to_try) == 1:
+            errmsg += f'\n\nPossible cause: No parsers found in environment.' \
+                f'\nPYTHONPATH is {os.environ["PYTHONPATH"]}\n'
+            errmsg += f'Using executable: {sys.executable}\n'
         raise NotValidOFracGridError(errmsg)
 
     return fxNet
