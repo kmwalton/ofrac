@@ -99,7 +99,8 @@ def parse(file_name):
             break
 
     if not fxNet:
-        raise NotValidOFracGridError(errmsg)
+        raise NotValidOFracGridError(
+            f'ofracs.parse() failed on "{file_name}":'+errmsg)
 
     return fxNet
 
