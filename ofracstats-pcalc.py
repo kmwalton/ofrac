@@ -299,7 +299,7 @@ class FractureZone:                                         #{{{
       (cc,cm) = (0,0.0)
 
       if __VERBOSITY__ > 1:
-         print('\nP10-{} for scanline at:'.format(d))
+         print('\nP10-{} for scanline at:'.format(dScanLine))
 
       for ci in range(nScanLine):
          (c1,c2) = ( uniform(*self.zn.r(d1)), uniform(*self.zn.r(d2)) )
