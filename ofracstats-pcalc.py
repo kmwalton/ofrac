@@ -525,7 +525,7 @@ class FractureZone:                                         #{{{
          self._fxA = sum( map( FractureZone.fracArea, self.fracs ) )
 
       if self.zn.vol() > 1.0e-6:
-         return "P32:    {:12.5g}  (V={:.5g}m^2 / V={:4.1f}m^3)".format(
+         return "P32:    {:12.5g}  (A={:.5g}m^2 / V={:4.1f}m^3)".format(
                       p32Data, self._fxA, self.zn.vol())
 
    def P33(self):
