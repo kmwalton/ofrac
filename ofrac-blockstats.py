@@ -8,8 +8,10 @@ import subprocess
 import shutil
 import warnings
 from re import sub
-from operator import attrgetter
-from itertools import combinations
+from math import floor,ceil
+from operator import attrgetter, mul
+from itertools import combinations, product, cycle
+from functools import reduce
 
 import numpy as np
 import scipy
@@ -20,6 +22,7 @@ import ofracs
 
 import logging
 logger = logging.getLogger(__file__)
+#logger.setLevel(logging.DEBUG)
 logger.setLevel(logging.INFO)
 logger.addHandler(logging.StreamHandler())
 
@@ -149,6 +152,11 @@ class _MatrixBlock:
         self.bb = _bb
         """[x1 x2 y1 y2 z1 z2]"""
 
+        _nbfx = sum(ifx > -1 for ifx in _bfx)
+        self.bfx = sorted(np.fromiter(filter(lambda ifx: ifx>-1, _bfx), count=_nbfx,
+                dtype=np.int32))
+        """Sorted list of indicies of bounding fractures"""
+
         _length = _bb[1::2]-_bb[::2]
         self.L = _length
         self.V = np.product(_length)
@@ -233,7 +241,40 @@ class _MatrixBlock:
         bb[5] = pt[2]+s
         return bb
 
-def process_blocks(dfn, npts=5):
+def process_blocks_regular(dfn):
+    """Find blocks using a grid, centred at halfway points in the dfn's grid"""
+
+    domo = np.array(dfn.domainOrigin, dtype=np.single)
+    doms = np.array(dfn.domainSize, dtype=np.single)
+
+
+    gl = [ np.fromiter(dfn.iterGridLines(ax), count=nax, dtype=np.single)
+            for ax, nax in zip(range(3), dfn.getGridLineCounts()) ]
+    sample_grid = 3*[None,]
+    for i in range(3):
+        if gl[i] is None:
+            sample_grid[i] = np.zeros((1,))
+        else:
+            sample_grid[i] = (gl[i][1:] + gl[i][:-1])/2
+    del gl
+
+    blocks = {}
+    for p in product(*sample_grid):
+        logger.debug(f'Evaluating grid point {p}')
+        bl = _MatrixBlock(dfn, p)
+        blbfx = tuple(bl.bfx)
+        if blbfx not in blocks:
+            blocks[blbfx] = bl
+            logger.debug(f'Adding block at {p} with bounding fractures {blbfx}.')
+        else:
+            logger.debug(f'Rejecting block at {p}')
+
+    npts = reduce(mul, map(attrgetter('size'), sample_grid))
+    logger.info(f'Processed {npts} matrix blocks; using {len(blocks)}.')
+
+    return list(blocks.values())
+
+def process_blocks_random(dfn, npts=5):
 
     domo = np.array(dfn.domainOrigin, dtype=np.single)
     doms = np.array(dfn.domainSize, dtype=np.single)
@@ -256,14 +297,27 @@ def histograms_to_png(block_list, filename_prefix):
         plt.title(f'Histogram of Matrix Block {name}')
         plt.xlabel(xlab)
         plt.ylabel(f'Frequency')
+
         hist = plt.hist(v, rwidth=0.75)
+        _mi,_ma = plt.xlim()
+        plt.xlim(left=floor(_mi), right=ceil(_ma))
 
         if 'vbars' in kwargs:
+            lines = ["-","--","-.",":"]
+            linecycler = cycle(lines)
+
+            vlines = []
             for labl,val in kwargs['vbars']:
-                plt.axvline(x=val)
-                ylim = plt.ylim()
-                plt.annotate(f'{labl}={val:.2f}',
-                        xy=(val, ylim[0]+.9*(ylim[1]-ylim[0])))
+                ll = labl+f' = {val:.2f}'
+                vlines.append(
+                    plt.axvline(
+                        x=val,
+                        label=ll,
+                        color='black',
+                        linestyle=next(linecycler)
+                ))
+
+            plt.legend(handles=vlines)
 
         fn = f'{filename_prefix}_{sub(" ","_",name)}.png'
         plt.savefig(fn)
@@ -277,7 +331,10 @@ def histograms_to_png(block_list, filename_prefix):
             dtype=np.single)
     stats = scipy.stats.describe(v)
     _make_plot(v, 'Volume', 'Volume [$m^3$]', filename_prefix,
-            vbars=[('$\mu$',stats.mean,),])
+            vbars=[
+            ('$\mu_{geo}$',scipy.stats.gmean(v),),
+            ('$\mu$',stats.mean,),
+            ])
     
 
     # Aspect
@@ -295,20 +352,39 @@ def histograms_to_png(block_list, filename_prefix):
     for r in range(_nbl):
         v[r,:] = block_list[r].L
     _make_plot(v[:,0], 'x-Length', 'x-Length [$m$]', filename_prefix,
-        vbars=[('$\mu$',np.mean(v[:,0]),),])
+        vbars=[
+            ('$\mu_{geo}$',scipy.stats.gmean(v[:,0]),),
+            ('$\mu$',np.mean(v[:,0]),),
+            ('median',np.median(v[:,0]),),
+        ])
     _make_plot(v[:,1], 'y-Length', 'y-Length [$m$]', filename_prefix,
-        vbars=[('$\mu$',np.mean(v[:,1]),),])
+        vbars=[
+            ('$\mu_{geo}$',scipy.stats.gmean(v[:,0]),),
+            ('$\mu$',np.mean(v[:,1]),),
+            ('median',np.median(v[:,0]),),
+        ])
 
 
+_FILTERS = {
+    '4sides':(lambda bl: len(bl.bfx) >=4),
+
+}
 if __name__ == '__main__':
 
     argp = argparse.ArgumentParser()
 
     argp.add_argument('-n', '--nblocks',
-        metavar='N',
-        type=int,
-        help='Number of matrix blocks in random sample. Default 10.',
+        metavar='N|{"reg"}',
+        help='''Number of matrix blocks in random sample, or "reg[ular]" for a
+        regular grid. Default 10.''',
         default=10,
+        )
+    argp.add_argument('-f', '--block-filter',
+        choices=list(_FILTERS.keys()),
+        default=None,
+        help='''Filter the blocks by the named criterion: "4sides" ensures that
+        fractures bound the block on at least four sizes.
+        ''',
         )
     argp.add_argument('--nudge',
         metavar='INCREMENT',
@@ -370,7 +446,32 @@ if __name__ == '__main__':
 
     # convert DFN to _SortedDFN for processing
     dfn = _SortedDFN(dfn)
-    blocks = process_blocks(dfn, args.nblocks)
+
+    # argument fixup
+    try:
+        _tmp = int(args.nblocks)
+    except ValueError:
+        pass
+    else:
+        args.nblocks = _tmp
+
+    # determine sample of matrix blocks
+    blocks = None
+    if isinstance(args.nblocks, int):
+        blocks = process_blocks_random(dfn, args.nblocks)
+    elif isinstance(args.nblocks, str) and \
+            args.nblocks.lower()[:3]=='reg':
+        blocks = process_blocks_regular(dfn)
+    else:
+        argp.error('Invalid value for --nblocks')
+
+    # apply filter
+    if args.block_filter is not None:
+        nprev = len(blocks)
+        blocks = list(filter(_FILTERS[args.block_filter], blocks))
+        logger.info(
+          f'Filter "{args.block_filter}" removed {nprev-len(blocks)} blocks.')
+
 
     # output to speed up next computation:
     # write subzone of fractures
