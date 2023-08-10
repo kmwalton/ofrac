@@ -25,6 +25,8 @@ from bisect import bisect_left,bisect_right
 from math import log10,floor,ceil,prod
 from itertools import chain,count
 
+import numpy as np
+
 def populate_parsers():
     """Return a list of OFracGrid parser options.
 
@@ -118,15 +120,24 @@ N_APERT_DIG = Decimal('0.000001')
 def D(v,new_prec):
     """Return a decimal with the specified quantization/precision"""
 
+    ret = v
+
     try:
-        return Decimal(v).quantize(new_prec)
+        ret = Decimal(v).quantize(new_prec)
     except decimal.InvalidOperation as e:
         if not v.is_finite():
-            return v
+            pass # return v
         else:
             raise ValueError(f'Cannot re-quantize {v}') from e
+    except TypeError as e:
+        if isinstance(v, np.floating):
+            ret = Decimal(float(v)).quantize(new_prec)
+        else:
+            raise
     except Exception as e:
         raise ValueError(f'Argument {v} of type {type(v)}.') from e
+
+    return ret
 
 
 def D_CO(v):
@@ -316,11 +327,17 @@ class OFrac():
         return f'{type(self)} at {id(self):#x}'
 
     def nudge(self, nudgeIncrement):
-        """Modify a fracture to new "nudged" coordinates."""
+        """Modify a fracture to new "nudged" coordinates.
+
+        If the `nudgeIncrement` is zero, do nothing and return success (True).
+        """
 
         returnstatus = True
 
         nudgeIncrement = D_CO(nudgeIncrement)
+
+        if float(nudgeIncrement) == 0.:
+            return True
 
         def myNudger(v):
             return nudge(v,nudgeIncrement)
@@ -934,11 +951,16 @@ class OFracGrid():
         Fixed gridlines are not nudged.
 
         Removes fractures or fails depending on __FX_COLLAPSE_POLICY__
+
+        If the `nudgeTo` is zero, do nothing.
         """
 
-        _gvsave = self._gridValid
-
         nudgeInc = D_CO(nudgeTo)
+
+        if float(nudgeInc) == 0.:
+            return 
+
+        _gvsave = self._gridValid
 
         def nudger(v):
             return nudge(v,nudgeInc)
