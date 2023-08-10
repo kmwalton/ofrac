@@ -247,6 +247,10 @@ class MatrixBlockOFracGrid(ofracs.OFracGrid):
 class MatrixBlock:
     """Representation of a matrix block bounded by fractures"""
 
+    FILTERS = {
+        '4sides':(lambda bl: len(bl.bfx) >=4),
+    }
+
     def __init__(self, dfn, pt):
         """Analyze the dfn to find the block around `pt`"""
 

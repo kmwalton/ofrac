@@ -9,6 +9,7 @@ import shutil
 import numpy as np
 
 import ofracs
+from ofracs import numTuple2str as t2s
 from ofrac.matrixblock import MatrixBlockOFracGrid, MatrixBlock
 
 import logging
@@ -31,10 +32,6 @@ def process_pstats(dfn):
 
 
 
-_FILTERS = {
-    '4sides':(lambda bl: len(bl.bfx) >=4),
-
-}
 if __name__ == '__main__':
 
     argp = argparse.ArgumentParser()
@@ -46,7 +43,7 @@ if __name__ == '__main__':
         default=10,
         )
     argp.add_argument('-f', '--block-filter',
-        choices=list(_FILTERS.keys()),
+        choices=list(MatrixBlock.FILTERS.keys()),
         default=None,
         help='''Filter the blocks by the named criterion: "4sides" ensures that
         fractures bound the block on at least four sizes.
@@ -100,6 +97,8 @@ if __name__ == '__main__':
     # process input dfn and modifications to it
     ofracs.__FX_COLLAPSE_POLICY__ = 'omit'
     dfn = ofracs.parse(args.FILE)
+    logger.info(
+      f'Read original domain {t2s(dfn.domainOrigin)}-{t2s(dfn.domainSize)}.')
     if args.sub_domain is not None:
         try:
             bb = np.fromiter(args.sub_domain.split(), count=6, dtype=float)
@@ -107,6 +106,7 @@ if __name__ == '__main__':
             argp.error('Error processing subdomain')
         dfn.setDomainSize(bb[::2], bb[1::2])
         dfn.translate(-bb[::2])
+        logger.info(f'Resized to {t2s(dfn.domainSize,"x","","")}.')
 
     if args.nudge:
         dfn.nudgeAll(args.nudge)
@@ -132,10 +132,14 @@ if __name__ == '__main__':
     else:
         argp.error('Invalid value for --nblocks')
 
+    logger.info(
+      f'Identified {len(blocks)} matrix blocks '
+      +f'in subdomain {t2s(bb[::2])}-{t2s(bb[1::2])}.')
+
     # apply filter
     if args.block_filter is not None:
         nprev = len(blocks)
-        blocks = list(filter(_FILTERS[args.block_filter], blocks))
+        blocks = list(filter(MatrixBlock.FILTERS[args.block_filter], blocks))
         logger.info(
           f'Filter "{args.block_filter}" removed {nprev-len(blocks)} blocks;'
           +f' {len(blocks)} remain.')
