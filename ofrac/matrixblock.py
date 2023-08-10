@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 class MatrixBlockOFracGrid(ofracs.OFracGrid):
 
     def __init__(self, ofracgrid_obj):
+        """Create a MatrixBlockOFracGrid from an existing OFracGrid"""
         self.__dict__.update(ofracgrid_obj.__dict__)
 
         nperpax = self.getFxCounts()
@@ -118,8 +119,11 @@ class MatrixBlockOFracGrid(ofracs.OFracGrid):
             
         return (retbnds, retifx)
 
-    def find_blocks_regular_grid(self):
-        """Find blocks using a grid, centred at halfway points in the dfn's grid"""
+    def find_blocks_regular_grid(self, filter_keywords=[]):
+        """Find blocks using a grid, centred at halfway points in the dfn's grid
+
+        Check each block versus the given filters from `MatrixBlock.FILTERS`.
+        """
 
         domo = np.array(self.domainOrigin, dtype=np.single)
         doms = np.array(self.domainSize, dtype=np.single)
@@ -139,20 +143,31 @@ class MatrixBlockOFracGrid(ofracs.OFracGrid):
         for p in product(*sample_grid):
             logger.debug(f'Evaluating grid point {p}')
             bl = MatrixBlock(self, p)
+
+            # skip loop iteration if any filters not met
+            for fkw in filter_keywords:
+                if not MatrixBlock.FILTERS[fkw](bl):
+                    logger.debug(f'Filter {fkw} rejected block at {p}')
+                    continue
+
+
             blbfx = tuple(bl.bfx)
             if blbfx not in blocks:
                 blocks[blbfx] = bl
                 logger.debug(f'Adding block at {p} with bounding fractures {blbfx}.')
             else:
-                logger.debug(f'Rejecting block at {p}')
+                logger.debug(f'Rejecting duplicate block at {p}')
 
         npts = reduce(mul, map(attrgetter('size'), sample_grid))
         logger.info(f'Processed {npts} matrix blocks; using {len(blocks)}.')
 
         return list(blocks.values())
 
-    def find_blocks_random(self, npts=5):
-        """Return a list of "random" blocks"""
+    def find_blocks_random(self, npts=5, filter_keywords=[]):
+        """Return a list of "random" blocks
+
+        Check each block versus the given filters from `MatrixBlock.FILTERS`.
+        """
 
         domo = np.array(self.domainOrigin, dtype=np.single)
         doms = np.array(self.domainSize, dtype=np.single)
@@ -160,88 +175,21 @@ class MatrixBlockOFracGrid(ofracs.OFracGrid):
         blocks = []
 
         for i in range(npts):
-            p = domo+doms*np.random.rand(3)
+            p = domo+doms*np.random.rand(domo.size)
             logger.debug(f'Chose point {p}')
 
-            blocks.append(MatrixBlock(self, p))
+            bl = MatrixBlock(self, p)
+
+            # skip loop iteration if any filters not met
+            for fkw in filter_keywords:
+                if not MatrixBlock.FILTERS[fkw](bl):
+                    logger.debug(f'Filter {fkw} rejected block at {p}')
+                    continue
+
+            blocks.append(bl)
 
         logger.info(f'Processed {npts} matrix blocks')
         return blocks
-
-    def to_histograms_pngs(self, block_list, filename_prefix):
-        """Create predefined histogram images"""
-
-        def _make_plot(v, name, xlab, pfx, **kwargs):
-            fig, axes = plt.subplots(1)
-            plt.title(f'Histogram of Matrix Block {name}')
-            plt.xlabel(xlab)
-            plt.ylabel(f'Frequency')
-
-            hist = plt.hist(v, rwidth=0.75)
-            _mi,_ma = plt.xlim()
-            plt.xlim(left=floor(_mi), right=ceil(_ma))
-
-            if 'vbars' in kwargs:
-                lines = ["-","--","-.",":"]
-                linecycler = cycle(lines)
-
-                vlines = []
-                for labl,val in kwargs['vbars']:
-                    ll = labl+f' = {val:.2f}'
-                    vlines.append(
-                        plt.axvline(
-                            x=val,
-                            label=ll,
-                            color='black',
-                            linestyle=next(linecycler)
-                    ))
-
-                plt.legend(handles=vlines)
-
-            fn = f'{filename_prefix}_{sub(" ","_",name)}.png'
-            plt.savefig(fn)
-            logger.info(f'Saved {name} histogram as {fn}')
-            plt.clf()
-        
-        _nbl = len(block_list)
-
-        # Volume
-        v = np.fromiter(map(attrgetter('V'), block_list), count=_nbl,
-                dtype=np.single)
-        stats = scipy.stats.describe(v)
-        _make_plot(v, 'Volume', 'Volume [$m^3$]', filename_prefix,
-                vbars=[
-                ('$\mu_{geo}$',scipy.stats.gmean(v),),
-                ('$\mu$',stats.mean,),
-                ])
-        
-
-        # Aspect
-        #with warnings.simplefilter('ignore'):
-        v = np.fromiter(map(attrgetter('axy'), block_list), count=_nbl,
-            dtype=np.single)
-        v = np.log10(v)
-        stats = scipy.stats.describe(v)
-        _make_plot(v, 'Aspect Ratio', '$log_{10}$(Aspect) [-]', filename_prefix,
-                vbars=[('$\mu$',stats.mean,),])
-
-        # x-Length
-        # y-Length
-        v = np.zeros((_nbl,3),np.single)
-        for r in range(_nbl):
-            v[r,:] = block_list[r].L
-        _make_plot(v[:,0], 'x-Length', 'x-Length [$m$]', filename_prefix,
-            vbars=[
-                ('$\mu_{geo}$',scipy.stats.gmean(v[:,0]),),
-                ('$\mu$',np.mean(v[:,0]),),
-                ('median',np.median(v[:,0]),),
-            ])
-        _make_plot(v[:,1], 'y-Length', 'y-Length [$m$]', filename_prefix,
-            vbars=[
-                ('$\mu_{geo}$',scipy.stats.gmean(v[:,0]),),
-                ('$\mu$',np.mean(v[:,1]),),
-                ('median',np.median(v[:,0]),),
-            ])
 
 
 class MatrixBlock:
@@ -343,6 +291,7 @@ class MatrixBlock:
 
     @staticmethod
     def _dummy_block_bounds(pt, s):
+        """Make a square block irrespecitve of fractures, for testing"""
         bb = np.zeros(6, dtype=np.single)
         bb[0] = pt[0]-s
         bb[1] = pt[0]+s
@@ -351,3 +300,122 @@ class MatrixBlock:
         bb[4] = pt[2]-s
         bb[5] = pt[2]+s
         return bb
+
+    @staticmethod
+    def get_stats(block_list):
+        """Return select statistics seen in the histograms as a dict"""
+
+        ret = {}
+        _nbl = len(block_list)
+
+        ret['N'] = _nbl
+
+        # Volume
+        v = np.fromiter(map(attrgetter('V'), block_list), count=_nbl,
+                dtype=np.single)
+        ret['Volume geo.mean'] = scipy.stats.gmean(v)
+        ret['Volume mean'] = np.mean(v)
+
+        # Aspect
+        #with warnings.simplefilter('ignore'):
+        v = np.fromiter(map(attrgetter('axy'), block_list), count=_nbl,
+            dtype=np.single)
+        v = np.log10(v)
+        ret['log-Aspect mean'] = np.mean(v)
+
+        # x-Length
+        # y-Length
+        v = np.zeros((_nbl,3),np.single)
+        for r in range(_nbl):
+            v[r,:] = block_list[r].L
+
+        for iax,ax in enumerate('xyz'):
+            ret[ax+'-length geo.mean'] = scipy.stats.gmean(v[:,iax])
+            ret[ax+'-length mean'] = np.mean(v[:,iax])
+            ret[ax+'-length median'] = np.median(v[:,iax])
+
+        return ret
+
+    @staticmethod
+    def to_histogram_pngs(block_list, filename_prefix):
+        """Create predefined histogram images.
+
+        Currently, histograms are
+            1) block volume, with aritimetic and geometric means
+            2) block aspect, with aritimetic mean
+            3) block x-length, with arith. geo. and median
+            4) block y-length, with arith. geo. and median
+        """
+
+        def _make_plot(v, name, xlab, pfx, **kwargs):
+            fig, axes = plt.subplots(1)
+            plt.title(f'Histogram of Matrix Block {name} ($N$={len(v)})')
+            plt.xlabel(xlab)
+            plt.ylabel(f'Frequency')
+
+            hist = plt.hist(v, rwidth=0.75)
+            _mi,_ma = plt.xlim()
+            plt.xlim(left=floor(_mi), right=ceil(_ma))
+
+            if 'vbars' in kwargs:
+                lines = ["-","--","-.",":"]
+                linecycler = cycle(lines)
+
+                vlines = []
+                for labl,val in kwargs['vbars']:
+                    ll = labl+f' = {val:.2f}'
+                    vlines.append(
+                        plt.axvline(
+                            x=val,
+                            label=ll,
+                            color='black',
+                            linestyle=next(linecycler)
+                    ))
+
+                plt.legend(handles=vlines)
+
+            fn = f'{filename_prefix}_{sub(" ","_",name)}.png'
+            plt.savefig(fn)
+            logger.info(f'Saved {name} histogram as {fn}')
+            plt.clf()
+        
+        _nbl = len(block_list)
+
+        # Volume
+        v = np.fromiter(map(attrgetter('V'), block_list), count=_nbl,
+                dtype=np.single)
+        stats = scipy.stats.describe(v)
+        _make_plot(v, 'Volume', 'Volume [$m^3$]', filename_prefix,
+                vbars=[
+                ('$\mu_{geo}$',scipy.stats.gmean(v),),
+                ('$\mu$',stats.mean,),
+                ])
+        
+
+        # Aspect
+        #with warnings.simplefilter('ignore'):
+        v = np.fromiter(map(attrgetter('axy'), block_list), count=_nbl,
+            dtype=np.single)
+        v = np.log10(v)
+        stats = scipy.stats.describe(v)
+        _make_plot(v, 'Aspect Ratio', '$log_{10}$(Aspect) [-]', filename_prefix,
+                vbars=[('$\mu$',stats.mean,),])
+
+        # x-Length
+        # y-Length
+        v = np.zeros((_nbl,3),np.single)
+        for r in range(_nbl):
+            v[r,:] = block_list[r].L
+        _make_plot(v[:,0], 'x-Length', 'x-Length [$m$]', filename_prefix,
+            vbars=[
+                ('$\mu_{geo}$',scipy.stats.gmean(v[:,0]),),
+                ('$\mu$',np.mean(v[:,0]),),
+                ('median',np.median(v[:,0]),),
+            ])
+        _make_plot(v[:,1], 'y-Length', 'y-Length [$m$]', filename_prefix,
+            vbars=[
+                ('$\mu_{geo}$',scipy.stats.gmean(v[:,0]),),
+                ('$\mu$',np.mean(v[:,1]),),
+                ('median',np.median(v[:,0]),),
+            ])
+

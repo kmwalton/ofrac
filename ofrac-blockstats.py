@@ -162,7 +162,7 @@ if __name__ == '__main__':
     MatrixBlock.pts_to_tecplot(blocks, args.prefix+'_points.dat')
     MatrixBlock.blocks_to_tecplot(blocks, args.prefix+'_blocks.dat')
 
-    dfn.to_histograms_pngs(blocks, args.prefix)
+    MatrixBlock.to_histogram_pngs(blocks, args.prefix)
 
     if args.lay_to_jpg:
         try:
