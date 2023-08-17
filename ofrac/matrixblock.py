@@ -4,7 +4,7 @@ import os
 import datetime
 import warnings
 from re import sub
-from math import floor,ceil
+from math import floor, ceil
 from operator import attrgetter, mul
 from itertools import combinations, product, cycle
 from functools import reduce
@@ -353,9 +353,18 @@ class MatrixBlock:
             plt.xlabel(xlab)
             plt.ylabel(f'Frequency')
 
-            hist = plt.hist(v, rwidth=0.75)
+            _hist_kwargs = {}
+            if 'range' in kwargs:
+                _hist_kwargs['range']=kwargs['range']
+
+            hist = plt.hist(v, rwidth=0.75, **_hist_kwargs)
+
             _mi,_ma = plt.xlim()
+            if 'range' in kwargs:
+                _mi, _ma =kwargs['range'][0],kwargs['range'][1]
+
             plt.xlim(left=floor(_mi), right=ceil(_ma))
+            _ymi,_yma = plt.ylim()
 
             if 'vbars' in kwargs:
                 lines = ["-","--","-.",":"]
@@ -363,19 +372,25 @@ class MatrixBlock:
 
                 vlines = []
                 for labl,val in kwargs['vbars']:
-                    ll = labl+f' = {val:.2f}'
+                    try:
+                        ll = labl+f' = {val:.2f}'
+                    except:
+                        ll = labl
+
                     vlines.append(
-                        plt.axvline(
+                        plt.vlines(
                             x=val,
+                            ymin=_ymi,
+                            ymax=_yma,
                             label=ll,
                             color='black',
-                            linestyle=next(linecycler)
+                            linestyles=next(linecycler)
                     ))
 
                 plt.legend(handles=vlines)
 
             fn = f'{filename_prefix}_{sub(" ","_",name)}.png'
-            plt.savefig(fn)
+            plt.savefig(fn, dpi=300)
             logger.info(f'Saved {name} histogram as {fn}')
             plt.clf()
         
@@ -384,12 +399,15 @@ class MatrixBlock:
         # Volume
         v = np.fromiter(map(attrgetter('V'), block_list), count=_nbl,
                 dtype=np.single)
+        pct = np.percentile(v,[95.,])
         stats = scipy.stats.describe(v)
         _make_plot(v, 'Volume', 'Volume [$m^3$]', filename_prefix,
-                vbars=[
+            vbars=[
                 ('$\mu_{geo}$',scipy.stats.gmean(v),),
                 ('$\mu$',stats.mean,),
-                ])
+            ],
+            range=[0., ceil(pct[0])],
+            )
         
 
         # Aspect
@@ -397,25 +415,26 @@ class MatrixBlock:
         v = np.fromiter(map(attrgetter('axy'), block_list), count=_nbl,
             dtype=np.single)
         v = np.log10(v)
+        pct = np.percentile(v, [5., 95.,])
+        max_less_extremes = ceil(np.max(np.abs(pct)))
         stats = scipy.stats.describe(v)
         _make_plot(v, 'Aspect Ratio', '$log_{10}$(Aspect) [-]', filename_prefix,
-                vbars=[('$\mu$',stats.mean,),])
+                vbars=[('$\mu$',stats.mean,),],
+                range=[-max_less_extremes, max_less_extremes,]
+            )
 
         # x-Length
         # y-Length
         v = np.zeros((_nbl,3),np.single)
         for r in range(_nbl):
             v[r,:] = block_list[r].L
-        _make_plot(v[:,0], 'x-Length', 'x-Length [$m$]', filename_prefix,
-            vbars=[
-                ('$\mu_{geo}$',scipy.stats.gmean(v[:,0]),),
-                ('$\mu$',np.mean(v[:,0]),),
-                ('median',np.median(v[:,0]),),
-            ])
-        _make_plot(v[:,1], 'y-Length', 'y-Length [$m$]', filename_prefix,
-            vbars=[
-                ('$\mu_{geo}$',scipy.stats.gmean(v[:,0]),),
-                ('$\mu$',np.mean(v[:,1]),),
-                ('median',np.median(v[:,0]),),
-            ])
-
+        for i,ax in enumerate('xyz'):
+            pct = np.percentile(v[:,i],[25., 75., 95.,])
+            _make_plot(v[:,i], f'{ax}-Length', f'{ax}-Length [$m$]', filename_prefix,
+                vbars=[
+                    ('$\mu_{geo}$',scipy.stats.gmean(v[:,i]),),
+                    ('$\mu$',np.mean(v[:,i]),),
+                    ('median',np.median(v[:,i]),),
+                    ('$1^{st}$ & $3^{rd}$ Quartile', pct[:2],),
+                ],
+                range=[0.,ceil(pct[-1]),],)
