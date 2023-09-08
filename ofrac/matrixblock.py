@@ -303,7 +303,14 @@ class MatrixBlock:
 
     @staticmethod
     def get_stats(block_list):
-        """Return select statistics seen in the histograms as a dict"""
+        """Return select statistics seen in the histograms as a `dict`
+
+        The `dict` is empty if there are no blocks
+        """
+
+        # early exit:
+        if not block_list:
+            return dict()
 
         ret = {}
         _nbl = len(block_list)
@@ -389,7 +396,7 @@ class MatrixBlock:
 
                 plt.legend(handles=vlines)
 
-            fn = f'{filename_prefix}_{sub(" ","_",name)}.png'
+            fn = filename_prefix+'_'+sub("\\W","_",name)+'.png'
             plt.savefig(fn, dpi=300)
             logger.info(f'Saved {name} histogram as {fn}')
             plt.clf()
@@ -415,20 +422,23 @@ class MatrixBlock:
         v = np.fromiter(map(attrgetter('axy'), block_list), count=_nbl,
             dtype=np.single)
         v = np.log10(v)
-        pct = np.percentile(v, [5., 95.,])
-        max_less_extremes = ceil(np.max(np.abs(pct)))
-        stats = scipy.stats.describe(v)
-        _make_plot(v, 'Aspect Ratio', '$log_{10}$(Aspect) [-]', filename_prefix,
-                vbars=[('$\mu$',stats.mean,),],
+        pct = np.percentile(v, [5., 25., 50., 75., 95.,])
+        max_less_extremes = ceil(np.max(np.abs(np.take(pct,[0,4]))))
+        _make_plot(v, 'Aspect Ratio, y:x', '$log_{10}$(Aspect) [-]', filename_prefix,
+                vbars=[
+                    ('$\mu$', np.mean(v),),
+                    ('$2^{nd} Quartile$', pct[2],),
+                    ('$1^{st}$ & $3^{rd}$ Quartile', np.take(pct, [1,3]),),
+                ],
                 range=[-max_less_extremes, max_less_extremes,]
             )
 
-        # x-Length
-        # y-Length
+        # x,y,z-Lengths
         v = np.zeros((_nbl,3),np.single)
         for r in range(_nbl):
             v[r,:] = block_list[r].L
         for i,ax in enumerate('xyz'):
+            if v[:,i].size < 2: continue
             pct = np.percentile(v[:,i],[25., 75., 95.,])
             _make_plot(v[:,i], f'{ax}-Length', f'{ax}-Length [$m$]', filename_prefix,
                 vbars=[
