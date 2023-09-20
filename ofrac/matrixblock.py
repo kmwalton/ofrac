@@ -399,7 +399,7 @@ class MatrixBlock:
             fn = filename_prefix+'_'+sub("\\W","_",name)+'.png'
             plt.savefig(fn, dpi=300)
             logger.info(f'Saved {name} histogram as {fn}')
-            plt.clf()
+            plt.close()
         
         _nbl = len(block_list)
 
