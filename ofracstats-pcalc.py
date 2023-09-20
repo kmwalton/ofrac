@@ -773,9 +773,8 @@ Sample Zones:
         # Auxvar
         for i,d in enumerate(sorted(DIR)):
             tecout += f'''AUXDATA P10{d}="{r[i][0][1]:.3f}"\n'''
-
-        #import pdb ; pdb.set_trace()
-        tecout += f'''AUXDATA P33="{r[10][0]:.3g}"\n'''
+        tecout += f'''AUXDATA P32="{r[10][0]:.3g}"\n'''
+        tecout += f'''AUXDATA P33="{r[11][0]:.3g}"\n'''
 
         # length stats ... P21???
         lengths = fzn.lengths()
