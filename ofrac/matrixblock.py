@@ -3,11 +3,12 @@
 import os
 import datetime
 import warnings
-from re import sub
+import re
 from math import floor, ceil
 from operator import attrgetter, mul
 from itertools import combinations, product, cycle
 from functools import reduce
+from time import perf_counter
 
 import scipy
 import numpy as np
@@ -19,6 +20,7 @@ import ofracs
 
 import logging
 logger = logging.getLogger(__name__)
+_INFO1 = logging.INFO+1
 
 class MatrixBlockOFracGrid(ofracs.OFracGrid):
 
@@ -27,12 +29,17 @@ class MatrixBlockOFracGrid(ofracs.OFracGrid):
         self.__dict__.update(ofracgrid_obj.__dict__)
 
         nperpax = self.getFxCounts()
+
+        logger.info(f'Determining matrix blocks in {ofracgrid_obj}-sized grid')
+
         obinfx = list(
                 -np.ones(nperpax[i], dtype=int) for i in range(3))
         locfx = list(
                 np.full(nperpax[i], np.inf, dtype=np.single)
                     for i in range(3))
         nextind = 3*[0,]
+
+        _t0 = perf_counter()
 
         # make bins for each fracture orientation;
         # classify fractures
@@ -45,7 +52,7 @@ class MatrixBlockOFracGrid(ofracs.OFracGrid):
 
         logger.debug(
             f'Put {nextind} fractures into yz, xz, xy orientation bins')
-        logger.debug('Sorting bins...')
+        logger.debug('Sorting fracture bins...')
 
         self.sorted_fx = 3*[None,]
         self.sorted_fx_locs = 3*[None,]
@@ -54,7 +61,9 @@ class MatrixBlockOFracGrid(ofracs.OFracGrid):
             self.sorted_fx[iax] = obinfx[iax][isorted]
             self.sorted_fx_locs[iax] = locfx[iax][isorted]
 
-        logger.debug('Sorting bins...done.')
+        _t1 = perf_counter()
+
+        logger.log(_INFO1, f'Sorting fracture bins...done in {_t1-_t0:.2f} s.')
 
     def find_block_bounds(self, pt):
         """Find bounding box locations and bounding fracture indices"""
@@ -193,11 +202,27 @@ class MatrixBlockOFracGrid(ofracs.OFracGrid):
 
 
 class MatrixBlock:
-    """Representation of a matrix block bounded by fractures"""
+    """Representation of a matrix block bounded by fractures
+
+
+
+    Attributes include:
+    - `pt` Seed point of the volume (x,y,z)
+    - `bb` Bounding box of the volume (x1, x2, ..., z1, z2)
+    - 'bfx` List of bounding fracture indices
+    - 'L' 
+
+    On-demand attributes include
+
+    """
 
     FILTERS = {
         '4sides':(lambda bl: len(bl.bfx) >=4),
+        '5sides':(lambda bl: len(bl.bfx) >=5),
+        '6sides':(lambda bl: len(bl.bfx) >=6),
     }
+
+    __slots__ = ['pt', 'bb', 'bfx', 'L', 'Afrac',]
 
     def __init__(self, dfn, pt):
         """Analyze the dfn to find the block around `pt`"""
@@ -218,11 +243,21 @@ class MatrixBlock:
 
         _length = _bb[1::2]-_bb[::2]
         self.L = _length
-        self.V = np.product(_length)
-        self.A = 2*sum(np.product(a) for a in combinations(_length, 2))
         self.Afrac = -1.
-        self.axy = _length[1]/_length[0]
-        self.axz = _length[2]/_length[0]
+
+    def __getattr__(self, a):
+        try:
+            super().getattr(a)
+        except AttributeError as e:
+            if a == 'V':
+                return np.product(self.L)
+            elif a == 'A':
+                return 2*sum(np.product(ll) for ll in combinations(self.L, 2))
+            elif re.match(r'a[xyz][xyz]', a, re.I):
+                i = 'xyz'.index(a[1].lower())
+                j = 'xyz'.index(a[2].lower())
+                return self.L[j]/self.L[i]
+            raise e
 
     def iter_pts(self):
         _tmp = np.zeros(3)
@@ -396,7 +431,7 @@ class MatrixBlock:
 
                 plt.legend(handles=vlines)
 
-            fn = filename_prefix+'_'+sub("\\W","_",name)+'.png'
+            fn = filename_prefix+'_'+re.sub("\\W+","_",name)+'.png'
             plt.savefig(fn, dpi=300)
             logger.info(f'Saved {name} histogram as {fn}')
             plt.close()
@@ -418,20 +453,22 @@ class MatrixBlock:
         
 
         # Aspect
-        #with warnings.simplefilter('ignore'):
-        v = np.fromiter(map(attrgetter('axy'), block_list), count=_nbl,
-            dtype=np.single)
-        v = np.log10(v)
-        pct = np.percentile(v, [5., 25., 50., 75., 95.,])
-        max_less_extremes = ceil(np.max(np.abs(np.take(pct,[0,4]))))
-        _make_plot(v, 'Aspect Ratio, y:x', '$log_{10}$(Aspect) [-]', filename_prefix,
-                vbars=[
-                    ('$\mu$', np.mean(v),),
-                    ('$2^{nd} Quartile$', pct[2],),
-                    ('$1^{st}$ & $3^{rd}$ Quartile', np.take(pct, [1,3]),),
-                ],
-                range=[-max_less_extremes, max_less_extremes,]
-            )
+        for aspect in ['axy', 'axz', 'ayz',]:
+            astr = f'{aspect[2]}:{aspect[1]}'
+            v = np.fromiter(map(attrgetter(aspect), block_list), count=_nbl,
+                    dtype=np.single)
+            v = np.log10(v)
+            pct = np.percentile(v, [5., 25., 50., 75., 95.,])
+            max_less_extremes = ceil(np.max(np.abs(np.take(pct,[0,4]))))
+            _make_plot(v, f'Aspect Ratio, {astr}', '$log_{10}$(Aspect) [-]',
+                    filename_prefix,
+                    vbars=[
+                        ('$\mu$', np.mean(v),),
+                        ('$2^{nd} Quartile$', pct[2],),
+                        ('$1^{st}$ & $3^{rd}$ Quartile', np.take(pct, [1,3]),),
+                    ],
+                    range=[-max_less_extremes, max_less_extremes,]
+                )
 
         # x,y,z-Lengths
         v = np.zeros((_nbl,3),np.single)
