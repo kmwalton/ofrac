@@ -1083,7 +1083,7 @@ class OFracGrid():
         # check spacing between all pairs
         diff = self._gl[axis][1] - self._gl[axis][0]
 
-        for i in range(2,len(self._gl[axis])-2):
+        for i in range(2,len(self._gl[axis])):
             tdiff = self._gl[axis][i] - self._gl[axis][i-1]
             # fail early
             if abs(tdiff - diff) > 1e-6:
