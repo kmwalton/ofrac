@@ -130,3 +130,7 @@ dmypy.json
 
 # vim stuff
 .*.sw[op]
+
+# annoying Windows Stuff
+*.un~
+*.py~
