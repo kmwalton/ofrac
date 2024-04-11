@@ -157,8 +157,8 @@ class SpatialZone:            # {{{
       if asString:
          strSave = asString
 
-         e = "[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
-         triple="\( *({}), *({}), *({}) *\)".format(e,e,e)
+         e = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
+         triple=r"\( *({}), *({}), *({}) *\)".format(e,e,e)
          word="((?:st(?:art)?)|(?:e(?:nd)?)|(?:si(?:ze)?))"
 
          coords = list( re.finditer("({})".format(triple), asString) )
