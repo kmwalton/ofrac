@@ -68,7 +68,7 @@ import os
 import datetime
 import multiprocessing
 from random import uniform
-from math import log10
+from math import log10, floor
 from itertools import chain,product
 from collections import deque
 
@@ -772,7 +772,12 @@ Sample Zones:
         tecout += f'''ZONE T="{zn!s}" ZONETYPE=ORDERED I=2 J=2 K=2 DATAPACKING=BLOCK\n'''
         # Auxvar
         for i,d in enumerate(sorted(DIR)):
-            tecout += f'''AUXDATA P10{d}="{r[i][0][1]:.3f}"\n'''
+            try :
+                mag = int(floor(log10(r[i][0][1]))-1)
+                _v = f'{r[i][0][1]:.{max(3,-mag)}f}'
+            except ValueError:
+                _v = '-'
+            tecout += f'''AUXDATA P10{d}="{_v}"\n'''
         tecout += f'''AUXDATA P32="{r[10][0]:.3g}"\n'''
         tecout += f'''AUXDATA P33="{r[11][0]:.3g}"\n'''
 
