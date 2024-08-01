@@ -773,11 +773,14 @@ Sample Zones:
         # Auxvar
         for i,d in enumerate(sorted(DIR)):
             try :
-                mag = int(floor(log10(r[i][0][1]))-1)
-                _v = f'{r[i][0][1]:.{max(3,-mag)}f}'
+                mag = int(floor(log10(r[i][0][1])))
+                _v = f'{round(r[i][0][1], -mag+1):.{-mag+2}f}'
+                _1dv = f'{round(1./r[i][0][1], mag+3):.{max(0,mag+2)}f}'
             except ValueError:
                 _v = '-'
+                _1dv = '-'
             tecout += f'''AUXDATA P10{d}="{_v}"\n'''
+            tecout += f'''AUXDATA Spacing{d}="{_1dv}"\n'''
         tecout += f'''AUXDATA P32="{r[10][0]:.3g}"\n'''
         tecout += f'''AUXDATA P33="{r[11][0]:.3g}"\n'''
 
