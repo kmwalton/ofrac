@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!python
 """Groups fractures in bins based on lengths and reports
 count of fractures per bin (frequency)
 
@@ -11,9 +11,13 @@ import sys
 import os
 import argparse
 import datetime
+import warnings
 from itertools import count
+from operator import itemgetter
+
 import numpy as np
 import scipy.stats
+from tabulate import tabulate
 
 import ofracs
 from ofracs import OFrac,OFracGrid,NotValidOFracGridError
@@ -39,16 +43,15 @@ class OFracBinner():
 """
         return s
 
+    def get_bin_bounds(self):
+        """Return list of string representations of bins."""
+        b = self.binLabels
+        foo=[ f'{a!s}-{b!s}' for (a,b) in zip(b[:-1], b[1:]) ] + [f'>{b[-1]}',]
+        return foo
+
     def strTecplotFooter(self):
         """Return the CUSTOMLABELS string, etc, as tecplot footer info"""
-
-        b = self.binLabels
-
-        foo='", "'.join(
-                f'{a!s}-{b!s}' for (a,b) in
-                    zip(b[:-1], b[1:]) )
-        foo += f'", ">{b[-1]}'
-
+        foo = '", "'.join(b for b in self.get_bin_bounds())
         return f'CUSTOMLABELS "{foo}"'
 
     def strTecplotZone(self):
@@ -143,7 +146,10 @@ class LengthBinner(OFracBinner):
                 ] )
                 continue
 
-            stats = scipy.stats.describe(length_data[i])
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore",
+                        category=RuntimeWarning, message="Precision loss occurred")
+                stats = scipy.stats.describe(length_data[i])
             gmean = scipy.stats.gmean(length_data[i])
 
             self.auxd[c].extend( [
@@ -154,6 +160,25 @@ class LengthBinner(OFracBinner):
             ] )
 
 
+    def _totable(self, histo):
+        n = max(1, np.sum(histo))
+        normf = histo/n
+        return list(zip(count(1), self.get_bin_bounds(), histo, normf,
+                    np.cumsum(normf)))
+
+    def __str__(self):
+        s = ''
+        for i,c in enumerate('xyz'):
+            s += f'''{c}-lengths data:\n'''
+
+            for k,v,comm in self.auxd[c]:
+                s += f'{k}{c}={v}\n'
+
+            s += tabulate(self._totable(self.histo[c]),
+                headers=['BinID', 'Bin', 'Frequency', 'Norm.Frequency', 'CDF'],
+                ) + '\n'
+
+        return s
 
 
     def strTecplotZone(self):
@@ -167,20 +192,10 @@ class LengthBinner(OFracBinner):
                     s += f'# {comm}:\n'
                 s += f'AUXDATA {k}="{v}"\n'
 
-
-            n = np.sum(self.histo[c])
-            for ibin,f in zip(count(1),self.histo[c]):
-                c = 0.
-                normf = 0.
-                if n > 0.:
-                    normf = f/n
-                s += f'{ibin:<2d} {f:10d} {c:10.6f} {normf:10.6f}\n'
-
+            s += tabulate(map(itemgetter(0,2,3,4), self._totable(self.histo[c])),
+                    tablefmt='plain') + '\n'
 
         return s
-#        for i,c in enumerate('xyz'):
-#            
-#            print(self.histo[c], file=file)
 
 
 if __name__ == '__main__':
@@ -229,3 +244,7 @@ if __name__ == '__main__':
     else:
         with open(args.tecplot_out,'w') as fout:
             b.printTecplot(fout)
+
+    print(b)
+
+    exit(0)
