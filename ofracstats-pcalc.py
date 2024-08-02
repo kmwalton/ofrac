@@ -348,17 +348,26 @@ class FractureZone:                                         #{{{
 
    def formatP10(self, p10Vals):
       """Makes a pretty string to report the P10 (and P01) results"""
+
       (d, p10, c, l) = p10Vals
 
       if self.zn.size(DIR[d]) < 1e-6 :
           return ''
 
+      try:
+           mag = int(floor(log10(p10)))
+      except ValueError:
+           mag = -1
+
+      _p10 = f'{round(p10, -mag+1):.{-mag+2}f}'
+
       p01 = float('inf')
       if c > 0:
          p01 = l / float(c)
-      return \
-         "P10-{0:2s}: {1:12.3f} /m  spacing-{0:} {2:12.3f} m (count={3:4d}, d={4:4.1f}m)".format(
-             d, p10, p01, c, l )
+      _p01 = f'{round(p01, mag+3):.{max(0,mag+2)}f}'
+
+      return f"P10-{d} : " \
+        + f'{_p10:12} /m  spacing-{d:} {_p01:12} m (count={c:4d}, d={l:4.1f}m)'
 
    def lengths(self):
       lengths = ( [0.0,0], [0.0,0], [0.0,0] ) # tuple of ( sum{length}, count )
