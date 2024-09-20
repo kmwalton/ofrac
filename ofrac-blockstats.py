@@ -1,4 +1,13 @@
 #!/usr/bin/env python
+"""Identify matrix blocks in a given DFN; visualize blocks & statistics.
+
+Specifically, produces:
+     - Tecplot-readable datasets of blocks and seed points
+     - png images of block lengths, aspect ratios,  and volumes
+     - OFracGrid objects (as .pkl files) of the sampled DFN (if it was modified
+       from the original by sub-domaining or nudging).
+
+"""
 
 import os
 import argparse
@@ -9,6 +18,7 @@ import shutil
 import numpy as np
 
 from time import perf_counter
+from itertools import chain
 
 import ofracs
 from ofracs import numTuple2str as t2s
@@ -160,6 +170,7 @@ if __name__ == '__main__':
         argp.error('Invalid value for --nblocks')
 
     _t1 = perf_counter()
+    bb = list(map(float, chain.from_iterable(dfn.getBounds())))
     logger.info(
       f'Identified {len(blocks)} matrix blocks '
       +f'in subdomain {t2s(bb[::2])}-{t2s(bb[1::2])} '
