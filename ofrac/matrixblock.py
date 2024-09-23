@@ -325,6 +325,26 @@ class MatrixBlock:
         logger.info(f'Wrote blocks as Tecplot data in {fn}')
 
     @staticmethod
+    def blocks2array(blocks):
+        """Convert a list of blocks to a contiguous array of data
+
+        Currently, data is packed as length(x3), log10(aspect z:x), and volume
+
+        """
+
+        l = np.zeros((len(blocks), 5), dtype=np.single)
+
+        for i,bl in enumerate(blocks):
+            l[i,:3] = bl.L
+
+        # these calculations should be consistent with the constructor
+        l[:,3] = np.log10(l[:,2]/l[:,0])
+        l[:,4] = np.prod(l[:,:3],axis=1)
+
+        return l
+
+
+    @staticmethod
     def _dummy_block_bounds(pt, s):
         """Make a square block irrespecitve of fractures, for testing"""
         bb = np.zeros(6, dtype=np.single)
