@@ -250,9 +250,9 @@ class MatrixBlock:
             super().getattr(a)
         except AttributeError as e:
             if a == 'V':
-                return np.product(self.L)
+                return np.prod(self.L)
             elif a == 'A':
-                return 2*sum(np.product(ll) for ll in combinations(self.L, 2))
+                return 2*sum(np.prod(ll) for ll in combinations(self.L, 2))
             elif re.match(r'a[xyz][xyz]', a, re.I):
                 i = 'xyz'.index(a[1].lower())
                 j = 'xyz'.index(a[2].lower())
