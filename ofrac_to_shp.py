@@ -9,9 +9,12 @@ projection (per GeoJSON spec).
 """
 
 import sys
+import os
 import argparse
 import math
 from io import StringIO
+from textwrap import dedent
+from datetime import datetime
 
 import numpy as np
 
@@ -34,7 +37,7 @@ if __name__ == '__main__':
         dest='t',
         nargs=3,
         type=float,
-        metavar=('PHI +X +Y'.split()),
+        metavar=tuple('PHI +X +Y'.split()),
         default=(-0.79, 305800., 4770100.),
         help='''Rotation angle, X-translation and Y-translation.
         Defaults set to rotation of -0.79 radians, translation of 
@@ -51,9 +54,9 @@ if __name__ == '__main__':
     argp.add_argument('--geo-json',
         default=False,
         action='store_true',
-        help='''Output GeoJSON format text of the data (converted to "epsg:4326"
-            per GeoJSON specification. The file will be named
-            'OUT_FILE_PFX.geojson'.
+        help='''Flag to create a file with a GeoJSON-format representation of
+        the data (converted to "epsg:4326" per GeoJSON specification). The file
+        will be named 'OUT_FILE_PFX.geojson'.
         ''',
     )
     argp.add_argument('DFN_FILE')
@@ -70,17 +73,15 @@ if __name__ == '__main__':
     dfn = ofracs.parse(argv.DFN_FILE)
     print(f'Loaded {argv.DFN_FILE}. Found {dfn.getFxCount()} fractures.')
 
-    # convert to geometric objects and data
-    #geo_dfn = FeatureCollection([])
+    # convert to geometric objects and numpy record array for data
     data = np.zeros(
         dfn.getFxCount(),
-        dtype=[('aperture m', 'f4'), ('K_f m/s', 'f4'), ('Length m','f4'),],
+        dtype=[('aperture_m', 'f4'), ('K_f_m_s', 'f4'), ('Length_m','f4'),],
         )
     geoms = dfn.getFxCount()*[None,]
-    for i,f in enumerate(dfn.iterFracs()):
 
+    for i,f in enumerate(dfn.iterFracs()):
         c = [float(v) for v in f.d]
-        #breakpoint()
         geom = shapely.LineString([c[0:4:2], c[1:4:2],])
         geom = rotate(geom, math.degrees(argv.t[0]), origin=(0,0))
         geom = translate(geom, *argv.t[1:])
@@ -88,32 +89,21 @@ if __name__ == '__main__':
         geoms[i] = geom
         data[i] = (float(f.ap), float(f.ap)**2/12./_mu,shapely.length(geom),)
 
-        #Disused:
-        '''props = {
-            'ap m':float(f.ap),
-            'K_f m/day':float(f.ap)**2/12./_mu*86400,
-            'Length m'=shapely.length(geom),
-        }
-
-        feat = Feature(
-            geometry=geom,
-            properties=props,
-        )
-
-        geo_dfn.features.append(feat)
-        '''
-
     # make the geo database
     geo_db = gpd.GeoDataFrame(data=data, geometry=geoms, crs=argv.crs.upper())
-    '''
-    geo_db = gpd.read_file(StringIO(geojson.dumps(geo_dfn)))
-    geo_db = geo_db.set_crs(argv.crs, allow_override=True)
-    '''
+
+    # add metadata (maybe?)
+    if not hasattr(geo_db, 'attrs'): geo_db.attrs={}
+    geo_db.attrs['Title']='Shapefile from DFN'
+    geo_db.attrs['Description']=dedent(f'''\
+    Created: {datetime.now()}
+    Original datafile: {os.path.basename(argv.DFN_FILE)}
+    ''')
 
     # output as GeoJSON
     if argv.geo_json is not None:
         print(f'Outputting GeoJSON FeatureCollection with '
-                f'{len(geo_dfn.features)} fractures.')
+                f'{len(geo_db)} fractures.')
         with open(argv.OUT_FILE_PFX+'.geojson', 'w') as fout:
             print(geo_db.to_json(to_wgs84=True), file=fout)
 
