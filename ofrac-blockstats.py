@@ -40,8 +40,28 @@ def process_pstats(dfn):
         ofracs.OFracGrid.pickleTo(dfn, f)
         subprocess.run([pcalc, f.name,])
 
+class BlockHow(argparse.Action):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args,**kwargs)
+        self.n=-1
+        self.do_regular = False
 
+    def __call__(self, parser, namespace, values, option_string):
 
+        try:
+            self.n = int(values)
+            setattr(namespace, self.dest,
+                    lambda dfn: dfn.find_blocks_random(self.n))
+            return
+
+        except ValueError as e:
+            if isinstance(values, str) and values.lower()=='reg':
+                self.do_regular = True
+                setattr(namespace, self.dest,
+                        lambda dfn: dfn.find_blocks_regular_grid())
+                return
+
+        parser.error(f'Bad value for {option_string}')
 
 if __name__ == '__main__':
 
@@ -51,7 +71,9 @@ if __name__ == '__main__':
         metavar='N|{"reg"}',
         help='''Number of matrix blocks in random sample, or "reg[ular]" for a
         regular grid. Default 10.''',
-        default=10,
+        nargs='?',
+        dest='make_blocks',
+        action=BlockHow,
         )
     argp.add_argument('-f', '--block-filter',
         choices=list(MatrixBlock.FILTERS.keys()),
@@ -148,26 +170,11 @@ if __name__ == '__main__':
     # convert DFN to _SortedDFN for processing
     dfn = MatrixBlockOFracGrid(dfn)
 
-    # argument fixup
-    try:
-        _tmp = int(args.nblocks)
-    except ValueError:
-        pass
-    else:
-        args.nblocks = _tmp
-
     logger.log(_INFO1, 'Identifying blocks...')
     _t0 = perf_counter()
 
     # determine sample of matrix blocks
-    blocks = None
-    if isinstance(args.nblocks, int):
-        blocks = dfn.find_blocks_random(args.nblocks)
-    elif isinstance(args.nblocks, str) and \
-            args.nblocks.lower()[:3]=='reg':
-        blocks = dfn.find_blocks_regular_grid()
-    else:
-        argp.error('Invalid value for --nblocks')
+    blocks = args.make_blocks(dfn)
 
     _t1 = perf_counter()
     bb = list(map(float, chain.from_iterable(dfn.getBounds())))
