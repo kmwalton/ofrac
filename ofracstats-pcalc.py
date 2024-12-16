@@ -173,14 +173,15 @@ class SpatialZone:            # {{{
          else:
             start = (0.0,0.0,0.0)
 
-         m = re.search("si(?:ze)?.*"+triple, asString)
-         if m:
-            size = tuple( map(float,m.groups()[0:3]) )
 
-         m = re.search("(?:e(?:nd)?.*)?"+triple, asString)
-         if m:
-            end = tuple( map(float,m.groups()[0:3]) )
+         size, end = None, None,
 
+         m_si = re.search("si(?:ze)?.*?"+triple, asString)
+         m_e = re.search("e(?:nd)?.*?"+triple, asString)
+         if m_si:
+            size = tuple( map(float,m_si.groups()[0:3]) )
+         elif m_e:
+            end = tuple( map(float,m_e.groups()[0:3]) )
 
          if not size and not end:
             print( "'{}' did not contain enough start, size or end info".format(strSave), file=sys.stderr )
