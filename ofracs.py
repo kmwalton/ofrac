@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Orthogonal discrete FRACture network container and manipulator
 
 A container and grid generator for 3D, axis-aligned, orthogonal fracture
@@ -38,40 +37,63 @@ def populate_parsers():
     ret = [ OFracGrid.PickleParser, ]
 
     try:
-        import pyhgs.parser.fractran as parser_fractran
+        import pyhgs
+        import pyhgs.parser.fractran as _hgs_parser_fractran
     except ModuleNotFoundError as e:
-        if 'pyhgs.parser.fractran' not in str(e):
+        if "No module named 'pyhgs'" in str(e):
+            pass
+        elif 'pyhgs.parser.fractran' not in str(e):
             raise e
-        print("Warning: did not find 'parser_fractran'. Cannot parse " \
-                "FRACTRAN-type orthogonal fracture networks.",
-                file=sys.stderr)
+        print("Warning: did not find 'pyhgs' or its 'parser_fractran'. "
+            +"Cannot parse FRACTRAN-type orthogonal fracture networks.",
+            file=sys.stderr)
     else:
-        ret += list(parser_fractran.iterFractranParsers())
+        ret += list(_hgs_parser_fractran.iterFractranParsers())
 
     try:
-        import pyhgs.parser.rfgen as parser_rfgen
+        import pyhgs
+        import pyhgs.parser.rfgen as _hgs_parser_rfgen
     except ModuleNotFoundError as e:
-        if 'pyhgs.parser.rfgen' not in str(e):
+        if "No module named 'pyhgs'" in str(e):
+            pass
+        elif 'pyhgs.parser.rfgen' not in str(e):
             raise e
-        print("Warning: did not find 'parser_rfgen'. Cannot parse " \
-                "RFGen-type orthogonal fracture networks.",
-                file=sys.stderr)
+        print("Warning: did not find 'pyhgs' or its 'parser_rfgen'. "
+            +"Cannot parse RFGen-type orthogonal fracture networks.",
+            file=sys.stderr)
     else:
         ret += [
-            parser_rfgen.RFGenOutFileParser,
-            parser_rfgen.RFGenFracListParser,
+            _hgs_parser_rfgen.RFGenOutFileParser,
+            _hgs_parser_rfgen.RFGenFracListParser,
         ]
 
     try:
+        import pyhgs
         import pyhgs.parser.hgseco
     except ModuleNotFoundError as e:
-        if 'pyhgs.parser.hgseco' not in str(e):
+        if "No module named 'pyhgs'" in str(e):
+            pass
+        elif 'pyhgs.parser.hgseco' not in str(e):
             raise e
-        print("Warning: did not find 'pyhgs.parser.hgseco'. Cannot parse "\
-                "HGS+RFGen-style orthogonal fracture networks.",
-                file=sys.stderr)
+        print("Warning: did not find 'pyhgs' or 'pyhgs.parser.hgseco'. "
+            +"Cannot parse HGS+RFGen-style orthogonal fracture networks.",
+            file=sys.stderr)
     else:
         ret += [pyhgs.parser.hgseco.HGSEcoFileParser,]
+
+    try:
+        import parser_rfgen as _lp
+    except ModuleNotFoundError as e:
+        if 'parser_rfgen' not in str(e):
+            raise e
+        print("Warning: did not find loose module 'parser_rfgen'. "
+            +"Cannot parse RFGen-type orthogonal fracture networks.",
+            file=sys.stderr)
+    else:
+        if hasattr(_lp, 'RFGenOutFileParser'):
+            ret += [_lp.RFGenOutFileParser,]
+        if hasattr(_lp, 'RFGenFracListParser'):
+            ret += [_lp.RFGenFracListParser,]
 
     return ret
 
