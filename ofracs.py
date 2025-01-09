@@ -366,16 +366,22 @@ class OFrac():
 
         newd = tuple(map(myNudger, self.d))
 
+        _policy = __FX_COLLAPSE_POLICY__
+        if hasattr(self, 'myNet'):
+            _policy=self.myNet.collapse_policy
+
         try:
             self._checkCollapse("nudging", newd)
 
         except FractureCollapseWarning as e:
-            if __FX_COLLAPSE_POLICY__ == 'fail':
-                raise
-            elif __FX_COLLAPSE_POLICY__ == 'warn-omit':
+            if _policy == 'fail':
+                raise FractureCollapseError(
+                    f'{e!s}\nFailing, due to ofracs.__FX_COLLAPSE_POLICY__') \
+                    from e
+            elif _policy == 'warn-omit':
                 print(e, file=sys.stderr)
                 returnstatus = False
-            elif __FX_COLLAPSE_POLICY__ == 'omit':
+            elif _policy == 'omit':
                 returnstatus = False
 
         else:
@@ -496,6 +502,7 @@ class OFracGrid():
 
         self._fx = []
         self._fixedgl = [ set(), set(), set() ]
+        self.collapse_policy = 'warn-omit'
 
         self.metadata = {}
 
