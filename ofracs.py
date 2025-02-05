@@ -17,14 +17,23 @@ Licenced under GNU GPLv3
 Documentation intended to work with pdoc3.
 """
 
-import sys,warnings,copy,re,os,pickle
+import sys
+import warnings
+import re
+import os
+import pickle
 import decimal
+import copy
 from decimal import Decimal,getcontext
 from bisect import bisect_left,bisect_right
 from math import log10,floor,ceil,prod
+import itertools
 from itertools import chain,count
 
 import numpy as np
+
+_import_warning_strings = []
+"""An array of warnining messages about parsers that have not been found."""
 
 def populate_parsers():
     """Return a list of OFracGrid parser options.
@@ -44,9 +53,10 @@ def populate_parsers():
             pass
         elif 'pyhgs.parser.fractran' not in str(e):
             raise e
-        print("Warning: did not find 'pyhgs' or its 'parser_fractran'. "
-            +"Cannot parse FRACTRAN-type orthogonal fracture networks.",
-            file=sys.stderr)
+        _import_warning_strings.append(
+            "Warning: did not find 'pyhgs' or its 'parser_fractran'. "
+            +"Cannot parse FRACTRAN-type orthogonal fracture networks."
+        )
     else:
         ret += list(_hgs_parser_fractran.iterFractranParsers())
 
@@ -58,9 +68,10 @@ def populate_parsers():
             pass
         elif 'pyhgs.parser.rfgen' not in str(e):
             raise e
-        print("Warning: did not find 'pyhgs' or its 'parser_rfgen'. "
-            +"Cannot parse RFGen-type orthogonal fracture networks.",
-            file=sys.stderr)
+        _import_warning_strings.append(
+            "Warning: did not find 'pyhgs' or its 'parser_rfgen'. "
+            +"Cannot parse RFGen-type orthogonal fracture networks."
+            )
     else:
         ret += [
             _hgs_parser_rfgen.RFGenOutFileParser,
@@ -75,9 +86,10 @@ def populate_parsers():
             pass
         elif 'pyhgs.parser.hgseco' not in str(e):
             raise e
-        print("Warning: did not find 'pyhgs' or 'pyhgs.parser.hgseco'. "
-            +"Cannot parse HGS+RFGen-style orthogonal fracture networks.",
-            file=sys.stderr)
+        _import_warning_strings.append(
+            "Warning: did not find 'pyhgs' or 'pyhgs.parser.hgseco'. "
+            +"Cannot parse HGS+RFGen-style orthogonal fracture networks."
+            )
     else:
         ret += [pyhgs.parser.hgseco.HGSEcoFileParser,]
 
@@ -86,9 +98,10 @@ def populate_parsers():
     except ModuleNotFoundError as e:
         if 'parser_rfgen' not in str(e):
             raise e
-        print("Warning: did not find loose module 'parser_rfgen'. "
-            +"Cannot parse RFGen-type orthogonal fracture networks.",
-            file=sys.stderr)
+        _import_warning_strings.append(
+            "Warning: did not find loose module 'parser_rfgen'. "
+            +"Cannot parse RFGen-type orthogonal fracture networks."
+            )
     else:
         if hasattr(_lp, 'RFGenOutFileParser'):
             ret += [_lp.RFGenOutFileParser,]
@@ -124,7 +137,10 @@ def parse(file_name):
 
     if not fxNet:
         raise NotValidOFracGridError(
-            f'ofracs.parse() failed on "{file_name}":'+errmsg)
+            f'ofracs.parse() failed on "{file_name}":\n'
+            +errmsg
+            +'\n\n' + '\n'.join(_import_warning_strings)
+            )
 
     return fxNet
 

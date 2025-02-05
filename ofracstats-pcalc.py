@@ -76,7 +76,7 @@ from collections import deque
 #from parser_rfgen import *
 #from parser_hgs_rfgeneco import *
 
-from ofrac.ofracs import *
+from ofracs import *
 
 __VERBOSITY__ = 0
 """Module level verbosity"""
