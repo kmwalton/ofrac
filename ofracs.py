@@ -1449,6 +1449,105 @@ class OFracGrid():
 
         return newGrid
 
+    def choose_nodes_block(self, block_spec):
+        """Return a list of nodes within a bounding box
+
+        Parameters
+        ----------
+        block_spec : array-like
+            A 6-valued array of (xfrom, xto, yfrom, yto, zfrom, zto). A
+            `str` of comma-separated values is also acceptable.
+
+        Returns
+        -------
+        A 2-tuple of `numpy.array` of grid (porous medium) node indices and
+        fracture node indices. Indices are 0-based.
+        """
+
+        grid = self
+
+        if type(block_spec) == str:
+            block_spec = re.sub(',',' ',block_spec).strip().split()
+        elif len(block_spec) == 6:
+            pass
+        else:
+            raise ValueError('block_spec must be interpretable as 6 floats')
+        
+        # loading zone 3D block
+        coords = toDTuple(block_spec)
+        (x1,x2,y1,y2,z1,z2) = coords
+
+        # full domain:
+        ngl = self.getGridLineCounts()
+        gl = list(list(self.iterGridLines(axis)) for axis in 'xyz')
+
+        # layer index increments
+        _lii = np.array([1, ngl[0], ngl[0]*ngl[1],])
+
+        # loading zone grid line indices [inclusive, exclusive)
+        # [ [ix1, ix2), [iy1, iy2), [iz1, iz2), ]
+        lzgl = -np.ones(6, dtype=int)
+
+        icoord = iter(coords)
+        for axis in range(3):
+            lzgl[2*axis  ]= bisect_left(gl[axis],next(icoord))
+            lzgl[2*axis+1]= bisect_right(gl[axis],next(icoord),lo=lzgl[2*axis])
+
+        # trim domain to store just the relevant fractures (reducing the search
+        # space)
+        # Note that the 'max(N_COORD_DIG...' might select a domain outside the
+        # original domain if the given range is on the upper bound of its
+        # axis. Therefore, guard each value of the origin so the cutout domain
+        # is a sub-zone of the orignal
+        cutout = copy.deepcopy(self)
+        cutout_o = [ x1, y1, z1 ]
+        cutout_sz = list(max(N_COORD_DIG,j-i) for i,j in iterpairs(coords))
+        for i,o,v in zip(count(), cutout_o, cutout_sz):
+            if o + v > cutout._mima[i][1]:
+                cutout_o[i] -= v
+        cutout.setDomainSize(cutout_o, cutout_sz)
+
+        # determine the pm nodes list
+        def _2slices(blk):
+            return [ np.s_[blk[0]:blk[1]],
+                     np.s_[blk[2]:blk[3]],
+                     np.s_[blk[4]:blk[5]], ]
+
+        def _get_indices_in_gl_block(blk):
+            '''Returns all indices, given ranges (is, ie, js, je, ks, ke)'''
+            ret = -np.ones(np.prod(blk[1::2]-blk[::2]), dtype=int)
+            for i, ijk in enumerate(itertools.product(
+                    *[_lsz*np.ogrid[_s]
+                        for (_s,_lsz) in reversed(list(zip(_2slices(blk), _lii)))])):
+                ret[i] = np.sum(ijk)
+            return ret
+
+        pmnodes = _get_indices_in_gl_block(lzgl)
+
+        # determine the fracture nodes
+        fxnodes = set()
+
+        # iter fractures and record the node numbers, noting HGS' fortran-style
+        # 1-based indexing and x-fastest/z-slowest
+        for f in cutout.iterFracs():
+
+            # fracture starting and ending gridlines
+            fgl = np.zeros(6, dtype=int)
+
+            for axis,(v1,v2),(g1,g2) in \
+                zip(count(),iterpairs(f.d),iterpairs(lzgl)):
+
+                i1 = bisect_left(gl[axis],v1,lo=g1,hi=g2)
+                i2 = bisect_right(gl[axis],v2,lo=i1,hi=g2)
+
+                fgl[2*axis  ]= i1
+                fgl[2*axis+1]= i2
+
+            fxnodes.update(_get_indices_in_gl_block(fgl))
+
+        return (pmnodes, np.array(sorted(fxnodes),dtype=int))
+
+ 
     @staticmethod
     def pickleTo( ofracObj, f ):
         """Dump to the given filename/file"""
