@@ -1079,6 +1079,25 @@ class OFracGrid():
         self._remakeMinMax(useFixedGrid=True)
 
 
+    def getGridLines(self, axis='all'):
+        """Return a list of grid lines
+
+        Parameters
+        ----------
+        axis : `str` or `int`
+            Default, 'all', which returns a 3-length list of arrays of grid
+            lines for the x-, y-, and z-axis, respectively. Otherwise, returns
+            an array of gridlines for the requested axis, as 0, 1, 2, or 'x',
+            'y', or 'z'
+        """
+        if axis == 'all':
+            return [ np.array(a) for a in self._gl ]
+        elif axis in (0, 1, 2):
+            return np.array(self._gl[axis])
+        elif axis in ('x', 'y', 'z'):
+            return np.array(self._gl['xyz'.index(axis)])
+        raise ValueError(f'Cannot interperet "{axis}" as an axis')
+
     def getGridLineCounts(self):
         """Return a 3-tuple of counts grid lines"""
         return tuple( len(l) for l in self._gl )
@@ -1479,7 +1498,7 @@ class OFracGrid():
 
         # full domain:
         ngl = self.getGridLineCounts()
-        gl = list(list(self.iterGridLines(axis)) for axis in 'xyz')
+        gl = self.getGridLines()
 
         # layer index increments
         _lii = np.array([1, ngl[0], ngl[0]*ngl[1],])
@@ -1547,6 +1566,31 @@ class OFracGrid():
 
         return (pmnodes, np.array(sorted(fxnodes),dtype=int))
 
+     
+    def ng2ni(self, ng):
+        '''Convert each (i, j, k)-row from grid to node index'''
+            
+        ngl = self.getGridLineCounts()
+        _lii = np.array([1, ngl[0], ngl[0]*ngl[1],])
+
+        if isinstance(ng, np.ndarray):
+            return np.dot(ng, _lii[:,np.newaxis]).squeeze()
+
+        raise NotImplementedError()
+
+    def ni2ng(self, ni):
+        '''Convert each node index value to (i, j, k) grid index'''
+
+        ngl = self.getGridLineCounts()
+        lii = np.array([1, ngl[0], ngl[0]*ngl[1],])
+
+        if isinstance(ni, np.ndarray):
+            ret = np.zeros((ni.size,3), dtype=int)
+            np.divmod(ni, lii[2], ret[:,2], ret[:,1])
+            np.divmod(ret[:,1], lii[1], ret[:,1], ret[:,0])
+            return ret
+
+        raise NotImplementedError()
  
     @staticmethod
     def pickleTo( ofracObj, f ):
