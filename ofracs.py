@@ -46,7 +46,7 @@ def populate_parsers():
     ret = [ OFracGrid.PickleParser, ]
 
     try:
-        import pyhgs
+        import hgstools.pyhgs
         import pyhgs.parser.fractran as _hgs_parser_fractran
     except ModuleNotFoundError as e:
         if "No module named 'pyhgs'" in str(e):
@@ -61,8 +61,8 @@ def populate_parsers():
         ret += list(_hgs_parser_fractran.iterFractranParsers())
 
     try:
-        import pyhgs
-        import pyhgs.parser.rfgen as _hgs_parser_rfgen
+        import hgstools.pyhgs
+        import hgstools.pyhgs.parser.rfgen as _hgs_parser_rfgen
     except ModuleNotFoundError as e:
         if "No module named 'pyhgs'" in str(e):
             pass
