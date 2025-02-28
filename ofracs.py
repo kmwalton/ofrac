@@ -32,6 +32,8 @@ from itertools import chain,count
 
 import numpy as np
 
+__docformat__='numpy'
+
 _import_warning_strings = []
 """An array of warnining messages about parsers that have not been found."""
 
@@ -1373,9 +1375,16 @@ class OFracGrid():
 
 
     def merge(self,
-            *others:"other OFracGrid objects"
+            *others:'OFracGrid'
         ):
-        """Merge this with these others and return a new OFracGrid"""
+        """Merge this with these others and return a new OFracGrid
+
+        Parameters
+        ----------
+        others : `ofrac.ofracs.OFracGrid`
+            Other grid objects to be merged-in to this one.
+
+        """
 
 
         if __VERBOSITY__ > 2:

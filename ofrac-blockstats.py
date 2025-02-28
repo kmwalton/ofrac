@@ -20,9 +20,8 @@ import numpy as np
 from time import perf_counter
 from itertools import chain
 
-import ofracs
-from ofracs import numTuple2str as t2s
-from ofrac.matrixblock import MatrixBlockOFracGrid, MatrixBlock
+from .ofracs import numTuple2str as t2s
+from .ofrac.matrixblock import MatrixBlockOFracGrid, MatrixBlock
 
 import logging
 logger = logging.getLogger(__file__)

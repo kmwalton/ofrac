@@ -24,7 +24,7 @@ import geojson
 from geojson import FeatureCollection, Feature, LineString
 import geopandas as gpd
 
-import ofracs
+from . import ofracs
 
 
 _mu = 1.003e-3

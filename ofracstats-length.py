@@ -19,8 +19,8 @@ import numpy as np
 import scipy.stats
 from tabulate import tabulate
 
-import ofracs
-from ofracs import OFrac,OFracGrid,NotValidOFracGridError
+#import ofracs
+from .ofracs import OFrac,OFracGrid,NotValidOFracGridError
 
 __VERBOSITY__ = 0
 

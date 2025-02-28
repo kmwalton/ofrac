@@ -16,7 +16,7 @@ import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 
-from ofrac import ofracs
+from .. import ofracs
 
 import logging
 logger = logging.getLogger(__name__)
@@ -465,8 +465,8 @@ class MatrixBlock:
         stats = scipy.stats.describe(v)
         _make_plot(v, 'Volume', 'Volume [$m^3$]', filename_prefix,
             vbars=[
-                ('$\mu_{geo}$',scipy.stats.gmean(v),),
-                ('$\mu$',stats.mean,),
+                (r'$\mu_{geo}$',scipy.stats.gmean(v),),
+                (r'$\mu$',stats.mean,),
             ],
             range=[0., ceil(pct[0])],
             )
@@ -483,7 +483,7 @@ class MatrixBlock:
             _make_plot(v, f'Aspect Ratio, {astr}', '$log_{10}$(Aspect) [-]',
                     filename_prefix,
                     vbars=[
-                        ('$\mu$', np.mean(v),),
+                        (r'$\mu$', np.mean(v),),
                         ('$2^{nd} Quartile$', pct[2],),
                         ('$1^{st}$ & $3^{rd}$ Quartile', np.take(pct, [1,3]),),
                     ],
@@ -499,8 +499,8 @@ class MatrixBlock:
             pct = np.percentile(v[:,i],[25., 75., 95.,])
             _make_plot(v[:,i], f'{ax}-Length', f'{ax}-Length [$m$]', filename_prefix,
                 vbars=[
-                    ('$\mu_{geo}$',scipy.stats.gmean(v[:,i]),),
-                    ('$\mu$',np.mean(v[:,i]),),
+                    (r'$\mu_{geo}$',scipy.stats.gmean(v[:,i]),),
+                    (r'$\mu$',np.mean(v[:,i]),),
                     ('median',np.median(v[:,i]),),
                     ('$1^{st}$ & $3^{rd}$ Quartile', pct[:2],),
                 ],

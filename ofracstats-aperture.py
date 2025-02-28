@@ -16,8 +16,7 @@ from math import log10,sqrt
 import numpy as np
 from scipy.stats import describe,gmean
 
-import ofracs
-from ofracs import OFracGrid,NotValidOFracGridError
+from .ofracs import populate_parsers, OFracGrid, NotValidOFracGridError
 
 
 
@@ -25,7 +24,7 @@ __VERBOSITY__ = 0
 
 
 # create a list of parser types
-parserOptions = ofracs.populate_parsers()
+parserOptions = populate_parsers()
 
 
 __VERBOSITY__ = 0
