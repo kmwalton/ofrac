@@ -1620,8 +1620,12 @@ class OFracGrid():
             self.fnin = fnin
             try:
                 self.myGrid = OFracGrid.unpickleFrom(self.fnin)
-            except:
-                raise NotValidOFracGridError(f'Failed unpickling from {self.fnin}')
+            except ModuleNotFoundError as e:
+                raise NotValidOFracGridError(
+                    f'Failed unpickling from {self.fnin}: {e!s}')
+            except Exception as e:
+                raise NotValidOFracGridError(
+                    f'Failed unpickling from {self.fnin}: {type(e)!s}')
 
         def getOFracGrid(self):
             return self.myGrid
