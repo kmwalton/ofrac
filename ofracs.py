@@ -48,8 +48,7 @@ def populate_parsers():
     ret = [ OFracGrid.PickleParser, ]
 
     try:
-        import hgstools.pyhgs
-        import pyhgs.parser.fractran as _hgs_parser_fractran
+        import hgstools.pyhgs.parser.fractran as _hgs_parser_fractran
     except ModuleNotFoundError as e:
         if "No module named 'pyhgs'" in str(e):
             pass
@@ -63,7 +62,6 @@ def populate_parsers():
         ret += list(_hgs_parser_fractran.iterFractranParsers())
 
     try:
-        import hgstools.pyhgs
         import hgstools.pyhgs.parser.rfgen as _hgs_parser_rfgen
     except ModuleNotFoundError as e:
         if "No module named 'pyhgs'" in str(e):
@@ -71,7 +69,7 @@ def populate_parsers():
         elif 'pyhgs.parser.rfgen' not in str(e):
             raise e
         _import_warning_strings.append(
-            "Warning: did not find 'pyhgs' or its 'parser_rfgen'. "
+            "Warning: did not find 'hgstools.pyhgs.parser.parser_rfgen'. "
             +"Cannot parse RFGen-type orthogonal fracture networks."
             )
     else:
@@ -81,19 +79,18 @@ def populate_parsers():
         ]
 
     try:
-        import pyhgs
-        import pyhgs.parser.hgseco
+        import hgstools.pyhgs.parser.hgseco as _hgs_parser_eco
     except ModuleNotFoundError as e:
         if "No module named 'pyhgs'" in str(e):
             pass
         elif 'pyhgs.parser.hgseco' not in str(e):
             raise e
         _import_warning_strings.append(
-            "Warning: did not find 'pyhgs' or 'pyhgs.parser.hgseco'. "
+            "Warning: did not find 'hgstools.pyhgs.parser.hgseco'. "
             +"Cannot parse HGS+RFGen-style orthogonal fracture networks."
             )
     else:
-        ret += [pyhgs.parser.hgseco.HGSEcoFileParser,]
+        ret += [_hgs_parser_eco.HGSEcoFileParser,]
 
     try:
         import parser_rfgen as _lp
@@ -1611,9 +1608,25 @@ class OFracGrid():
             pickle.dump(ofracObj, f, pickle.HIGHEST_PROTOCOL)
 
     @staticmethod
-    def unpickleFrom( filename ):
-        with open(filename, 'rb') as fin:
-            return pickle.load(fin)
+    def unpickleFrom(filename):
+        ret = None
+        try:
+            with open(filename, 'rb') as fin:
+                ret = pickle.load(fin)
+        except ModuleNotFoundError as e:
+            # if the pathing of the pickled module was different than the
+            # current pathing, add some aliases....
+            if str(e) == "No module named 'ofrac.ofracs'":
+                sys.modules['ofrac.ofracs'] = sys.modules[__name__]
+            elif str(e) == "No module named 'ofracs'":
+                sys.modules['ofracs'] = sys.modules[__name__]
+            else:
+                raise # something different... raise it
+            # try again, or return whatever error was found before
+            with open(filename, 'rb') as fin:
+                ret = pickle.load(fin)
+
+        return ret
 
     class PickleParser:
         def __init__(self, fnin):
