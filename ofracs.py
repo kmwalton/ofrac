@@ -382,7 +382,7 @@ class OFrac():
         def myNudger(v):
             return nudge(v,nudgeIncrement)
 
-        newd = tuple(map(myNudger, self.d))
+        newd = tuple(map(myNudger, self.d[:6]))
 
         _policy = __FX_COLLAPSE_POLICY__
         if hasattr(self, 'myNet'):
