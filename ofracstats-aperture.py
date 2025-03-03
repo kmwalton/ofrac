@@ -16,15 +16,10 @@ from math import log10,sqrt
 import numpy as np
 from scipy.stats import describe,gmean
 
-from .ofracs import populate_parsers, OFracGrid, NotValidOFracGridError
+import ofracs
+from ofracs import parse as parse_dfn
+from ofracs import OFracGrid, NotValidOFracGridError
 
-
-
-__VERBOSITY__ = 0
-
-
-# create a list of parser types
-parserOptions = populate_parsers()
 
 
 __VERBOSITY__ = 0
@@ -62,35 +57,10 @@ class Binner:
            if __VERBOSITY__:
               print( "========= %s ========="%(fnin))
 
-           fxNet = None
-
-           errmsg = ''
-
-           # try some different parsers
-           for ParserClass in parserOptions:
-              try:
-                 parser = ParserClass(fnin)
-                 fxNet = parser.getOFracGrid()
-                   
-              except BaseException as e:
-                 errmsg += '\n'+ParserClass.__name__+' did not work- {}'.format(str(e))
-                 fxNet = None
-
-              except:
-                  (t,v,tb) = sys.exc_info()
-                  print( "Unexpected error: {}\n{}\n\nTraceback:".format(t,v), file=sys.stderr )
-                  traceback.print_tb(tb)
-                  sys.exit(-1)
-
-              if fxNet:
-                 break
-
-           if not fxNet:
-              raise NotValidOFracGridError('Could not parse input file "{}":\n{}\n'.format(fnin,errmsg))
+           fxNet = parse_dfn(fnin)
            
-           else:
-              self.datafns.append( os.path.basename(fnin) )
-              self.grid = self.grid.merge(fxNet)
+           self.datafns.append( os.path.basename(fnin) )
+           self.grid = self.grid.merge(fxNet)
 
         #
         # do the statistics

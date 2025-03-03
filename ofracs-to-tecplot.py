@@ -2,7 +2,7 @@
 """Convert some orthogonal fracture network to tecplot format."""
 
 import sys
-from . import ofracs
+import ofracs
 
 import argparse
 

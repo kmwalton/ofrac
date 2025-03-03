@@ -72,11 +72,8 @@ from math import log10, floor
 from itertools import chain,product
 from collections import deque
 
-#from parser_fractran import *
-#from parser_rfgen import *
-#from parser_hgs_rfgeneco import *
-
-from .ofracs import *
+from ofracs import parse as parse_dfn
+from ofracs import OFrac
 
 __VERBOSITY__ = 0
 """Module level verbosity"""
@@ -602,31 +599,7 @@ def doEverything(args, batchDir=''):
        if __VERBOSITY__:
           print( "========= %s ========="%(fnin))
 
-       fxNet = None
-       errmsg = ''
-
-       # try some different parsers
-       for ParserClass in populate_parsers():
-          try:
-             parser = ParserClass(fnin)
-             fxNet = parser.getOFracGrid()
-
-          except BaseException as e:
-             errmsg += '\n'+ParserClass.__name__+' did not work- {}'.format(str(e))
-             fxNet = None
-
-          except:
-              (t,v,tb) = sys.exc_info()
-              print( "Unexpected error: {}\n{}\n\nTraceback:".format(t,v), file=sys.stderr )
-              traceback.print_tb(tb)
-              sys.exit(-1)
-
-          if fxNet:
-             break
-
-       if not fxNet:
-          #import pdb ; pdb.set_trace()
-          raise NotValidInputFile('Could not parse input file "{}":\n{}\n'.format(fnin,errmsg))
+       fxNet = parse_dfn(fnin)
 
        # populate
        nfile= fxNet.getFxCounts()

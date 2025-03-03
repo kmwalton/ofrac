@@ -19,8 +19,8 @@ import numpy as np
 import scipy.stats
 from tabulate import tabulate
 
-#import ofracs
-from .ofracs import OFrac,OFracGrid,NotValidOFracGridError
+import ofracs
+from ofracs import OFrac,OFracGrid,NotValidOFracGridError
 
 __VERBOSITY__ = 0
 
@@ -85,28 +85,7 @@ class LengthBinner(OFracBinner):
         self.grid = OFracGrid()
         
         # TODO make more robust, loop through more filenames
-        # try some different parsers
-        errmsg = ''
-        fxNet = None
-        for ParserClass in ofracs.populate_parsers():
-            try:
-                parser = ParserClass(files[0])
-                fxNet = parser.getOFracGrid()
-
-            except BaseException as e:
-                errmsg += '\n'+ParserClass.__name__+\
-                          ' did not work- {}'.format(str(e))
-                fxNet = None
-
-            except:
-                (t,v,tb) = sys.exc_info()
-                print( "Unexpected error: {}\n{}\n\nTraceback:".format(t,v),
-                        file=sys.stderr )
-                traceback.print_tb(tb)
-                sys.exit(-1)
-
-            if fxNet:
-                break
+        fxNet = ofracs.parse(files[0])
 
         self.grid = self.grid.merge(fxNet)
 
