@@ -16,10 +16,13 @@ from math import log10,sqrt
 import numpy as np
 from scipy.stats import describe,gmean
 
-import ofracs
-from ofracs import parse as parse_dfn
-from ofracs import OFracGrid, NotValidOFracGridError
-
+try:
+    from ofrac.ofracs import parse as parse_dfn
+    from ofrac.ofracs import OFracGrid, NotValidOFracGridError
+except ModuleNotFoundError:
+    # accommodate "old style" PYTHONPATHing to within this module
+    from ofracs import parse as parse_dfn
+    from ofracs import OFracGrid, NotValidOFracGridError
 
 
 __VERBOSITY__ = 0

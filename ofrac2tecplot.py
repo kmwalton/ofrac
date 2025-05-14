@@ -2,10 +2,14 @@
 """Convert some orthogonal fracture network to tecplot format."""
 
 import sys
-import ofracs
 
 import argparse
 
+try:
+    import ofrac.ofracs as ofracs
+except ModuleNotFoundError:
+    # accommodate "old style" PYTHONPATHing to within this module
+    import ofracs
 
 if __name__ == '__main__':
 

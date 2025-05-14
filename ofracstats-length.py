@@ -19,8 +19,12 @@ import numpy as np
 import scipy.stats
 from tabulate import tabulate
 
-import ofracs
-from ofracs import OFrac,OFracGrid,NotValidOFracGridError
+try:
+    from ofrac.ofracs import OFrac,OFracGrid,NotValidOFracGridError
+except ModuleNotFoundError:
+    # accommodate "old style" PYTHONPATHing to within this module
+    import ofracs
+    from ofracs import OFrac,OFracGrid,NotValidOFracGridError
 
 __VERBOSITY__ = 0
 

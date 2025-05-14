@@ -72,8 +72,13 @@ from math import log10, floor
 from itertools import chain,product
 from collections import deque
 
-from ofracs import parse as parse_dfn
-from ofracs import OFrac
+try:
+    from ofrac.ofracs import parse as parse_dfn
+    from ofrac.ofracs import OFrac
+except ModuleNotFoundError:
+    # accommodate "old style" PYTHONPATHing to within this module
+    from ofracs import parse as parse_dfn
+    from ofracs import OFrac
 
 __VERBOSITY__ = 0
 """Module level verbosity"""
