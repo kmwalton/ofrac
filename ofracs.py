@@ -264,6 +264,8 @@ __FX_COLLAPSE_POLICY__ = __FX_COLLAPSE_POLICIES__[0]
 class OFrac():
     """An orthogonal fracture object"""
 
+    __slots__ = ('d', 'ap', 'myNet',)
+
     def __init__(self, *vals, **kwargs):
 
         self.d = 6*[0.,]
@@ -291,6 +293,7 @@ class OFrac():
         """
         self.d = tuple(D_CO(v) for v in (xfrom, xto, yfrom, yto, zfrom, zto,) )
         self.ap = D_AP(ap)
+        self.myNet = None
 
         # calculate the size of the fracture in each dimension
         # make sure there are are two good-length sides
@@ -425,13 +428,17 @@ class OFrac():
     def truncate(self, s, e):
         """Modify a fracture's size to fit within a given bounding box
 
-        s - the minimum coordinate of the bounding box (numeric-type triple)
-        e - the maximum coordinate of the bounding box (numeric-type triple)
-
         Use "big values" in the s and e coordinates if you do not want to
         truncate in a particular direction.
 
         No error checking on valid inputs s and e!
+
+        Parameters
+        ----------
+        s : array-like
+            The minimum coordinate of the bounding box (numeric-type triple)
+        e : array-like
+            The maximum coordinate of the bounding box (numeric-type triple)
         """
 
         domTruncStr = OFrac._Truncate_Op_Message(s,e)
