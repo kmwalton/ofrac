@@ -68,5 +68,28 @@ class TestOFracGrid(unittest.TestCase):
         self.assertArrayEqual(g.getGridLines(0), [0., 1.])
         self.assertArrayEqual(g.getGridLines('x'), [0., 1.])
 
+
+    def test_truncate(self):
+
+        g = self._make_1x1_domain()
+        g.addFracture(OFrac(0., 1., 0.5, 0.5, 0., 1., 0.002))
+        g.addFracture(OFrac(0.5, 0.5, 0., 1., 0., 1., 0.003))
+
+        h = g.merge() # copy
+        h.setDomainSize((0,0,0),(1,1,1))
+        self.assertEqual(h.getFxCount(), 3)
+
+        h.setDomainSize((0,0,0),(1,1,0.5))
+        self.assertEqual(h.getFxCount(), 3)
+
+        h.setDomainSize((0,0,0),(0.5,0.5,0.5))
+        self.assertEqual(h.getFxCount(), 3)
+
+        h.setDomainSize((0,0,0),(0.5,0.5,0.4))
+        self.assertEqual(h.getFxCount(), 2)
+
+        h.setDomainSize((0,0,0),(0.4,0.4,0.4))
+        self.assertEqual(h.getFxCount(), 0)
+
 if __name__ == '__main__':
     unittest.main()
