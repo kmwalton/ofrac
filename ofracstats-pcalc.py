@@ -275,6 +275,11 @@ class FractureZone:                                         #{{{
       self.fracs = list( filter( zn.containsFracture, allFracs ) )
       self.nScan = nScan
 
+   def iterFracs(self):
+      """iterate over fractures"""
+      for f in self.fracs:
+         yield f
+
    def setNScan( self, n ):
       """Set the number of scan lines/planes/whatever in the next PNN
       calculation(s).

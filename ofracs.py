@@ -45,6 +45,7 @@ def populate_parsers():
     parsers of orthogonal fracture networks.
     """
 
+    #ret = [ OFracGrid.PickleParser, OFracGrid.LegacyUnpickler, ]
     ret = [ OFracGrid.PickleParser, ]
 
     try:
@@ -79,18 +80,18 @@ def populate_parsers():
         ]
 
     try:
-        import hgstools.pyhgs.parser.hgseco as _hgs_parser_eco
+        import hgstools.pyhgs.parser.eco as _hgs_parser_eco
     except ModuleNotFoundError as e:
         if "No module named 'pyhgs'" in str(e):
             pass
-        elif 'pyhgs.parser.hgseco' not in str(e):
+        elif 'pyhgs.parser.eco' not in str(e):
             raise e
         _import_warning_strings.append(
-            "Warning: did not find 'hgstools.pyhgs.parser.hgseco'. "
+            "Warning: did not find 'hgstools.pyhgs.parser.eco'. "
             +"Cannot parse HGS+RFGen-style orthogonal fracture networks."
             )
     else:
-        ret += [_hgs_parser_eco.HGSEcoFileParser,]
+        ret += [_hgs_parser_eco.EcoFile,]
 
     try:
         import parser_rfgen as _lp
@@ -352,6 +353,10 @@ class OFrac():
         return '({:{w}}->{:{w}}, {:{w}}->{:{w}}, {:{w}}->{:{w}}), ap='.format(
                 *self.d, w=wid)+str(self.ap)
 
+    def __getitem__(self, i):
+        if i < 6: return self.d[i]
+        if i == 6: return self.ap
+        raise IndexError(f'{__class__} has no index {i}')
 
     def asRFGenStr(self,i=None):
         wid = 8
@@ -502,6 +507,15 @@ class OFrac():
             yield (d[1], d[2], d[4])
         else:
             raise RuntimeError('Unexpected (wrong?) value for perpenicular direction')
+
+    def __setstate__(self, state):
+        """
+        __setstate__ is called when unpickling to set the object's state.
+        We need to implement it to handle the __dict__ from the old object.
+        """
+        # The 'state' dictionary contains the attributes from the pickled object's __dict__.
+        for key, val in state.items():
+            setattr(self, key, val)
 
 class OFracGrid():
     """Container/Utility class for an orthogonal fracture network."""
@@ -751,7 +765,7 @@ class OFracGrid():
             o = OFrac.determineFracOrientation(fx)
             self._ocounts[o] += 1
 
-# domain information
+    # domain information
     def getBounds(self):
         if not self._gridValid:
             raise RuntimeError(
@@ -854,6 +868,9 @@ class OFracGrid():
                 print( _msg )
 
 
+    def getDomainStart(self):
+        return tuple( self.domainOrigin )
+
     def getDomainEnd(self):
         def sumInfGuarded(aList):
             if   DINF in map(abs, aList): return DINF
@@ -951,8 +968,7 @@ class OFracGrid():
         del newOrigin
 
 
-
-# methods for fractures
+    # methods for fractures
     def addFracture( self, candidateOFrac, index=-1 ):
         """Add a given OFrac fracture object"""
         self._cbValid = False
@@ -1059,7 +1075,7 @@ class OFracGrid():
         else:
             return sum(map(lambda f:f.calcElems(), self._fx))
 
-# methods for grid lines
+    # methods for grid lines
     def addGridline( self, axis, glvalue ):
         """Add a gridline to the list of fixed gridlines.
 
@@ -1650,3 +1666,18 @@ class OFracGrid():
         def getOFracGrid(self):
             return self.myGrid
 
+
+    class LegacyUnpickler(pickle.Unpickler):
+        def find_class(self, module, name):
+            breakpoint()
+            # Example: Handle a renamed class
+            if module == "old_module_name" and name == "OldClassName":
+                module = "new_module_name"
+                name = "MyCustomClass" # Assuming MyCustomClass is the new name
+
+            # Allow unpickling of specific classes only
+            if module == "__main__" and name == "MyCustomClass":
+                return super().find_class(module, name)
+            
+            # Optionally, raise an error or return a placeholder for unknown classes
+            raise pickle.UnpicklingError(f"Global unpickling of {module}.{name} is disallowed.")
