@@ -114,7 +114,7 @@ class Binner:
         # population of apertures to be described
         aps = np.fromiter(
                 map( lambda f: f.ap, self.grid.iterFracs()),
-                dtype=np.float_)
+                dtype=np.float32)
 
 
         # degenerate population
@@ -257,7 +257,7 @@ class Binner:
 
 
     def makeDescStats(self):
-        aps = np.fromiter(map( lambda f: f.ap, self.grid.iterFracs()), dtype=np.float_)
+        aps = np.fromiter(map( lambda f: f.ap, self.grid.iterFracs()), dtype=np.float32)
         (N,(apMin,apMax),mean,variance,skewness,kurtosis) = describe(aps)
 
         s = '\n'.join( f'{k:15} = {v!s}' for (k,v) in self.descStats.items() )
