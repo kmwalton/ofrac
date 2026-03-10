@@ -514,6 +514,13 @@ class OFrac():
         We need to implement it to handle the __dict__ from the old object.
         """
         # The 'state' dictionary contains the attributes from the pickled object's __dict__.
+        if type(state) == tuple:
+            state = state[1]
+        elif hasattr(state,'items'):
+            pass
+        else:
+            raise ValueError('Bad state: type={type(state)}, value={state!s}')
+
         for key, val in state.items():
             setattr(self, key, val)
 
