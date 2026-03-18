@@ -11,16 +11,14 @@ Fracture abundance measures (density, intensity, porosity) are defined using
 the "P-system" as defined by W. Dershowitz. e.g.:
 [1] http://www.fracman.com/wp-content/uploads/Fracture-Intensiity-Measures-P32-with-Wang-Conversions.pdf
 
-CURRENTLY IMPLEMENTED MEASURES
-
-   P10 - linear fracture density, counts per metre along scanline(s)
-   P20 - areal fracture density, unbiased counts per square metre
-   P30 - volumetric fracture density, counts per cubic metre
-   P22 - porosity, area of fractures (aperture * length) per unit area sampled
-   P32 - fracture area per unit sampled volume.[Σ(length_1*length_2)]/volume_total
-   P33 - porosity, volume of fractures (aperture * length * length) per unit
-         volume sampled
-
+CURRENTLY IMPLEMENTED MEASURES:
+- P10 : linear fracture density, counts per metre along scanline(s)
+- P20 : areal fracture density, unbiased counts per square metre
+- P30 : volumetric fracture density, counts per cubic metre
+- P22 : porosity, area of fractures (aperture * length) per unit area sampled
+- P32 : fracture area per unit sampled volume.[Σ(length_1*length_2)]/volume_total
+- P33 : porosity, volume of fractures (aperture * length * length) per unit volume sampled
+ 
 Note: Some sampling bias may be present when using subzones. Subzones contain
 and consider all fractures that intersect the subzone volume. Thus, one fracture
 may be counted in two subzones. e.g. see slide 17 in [1].
@@ -35,29 +33,32 @@ Orthogonal fracture input file format includes a header line and lines
 describing fractures. All file lines up to the header line are ignored. Comment
 lines beginning with // are ignored. And lines after the e.g.
 
-"
-This line is ignored.
-The following is the minimal header line, some column titles may be
-omitted/altered, but the core 'xfrom ... zto' must be present
-       xfrom    xto    yfrom    yto    zfrom    zto
-// This comment is ignored.
-// Axis-aligned fractures are defined by
-// id  xfrom    xto    yfrom    yto    zfrom   zto  aperture  orientation
-   1    0.0     1.0     0.5     0.5     0.0    1.0  0.000100   2
-"
+```
+// The following is the header line, where square brackets indicate optional
+// columns:
+//   [id] xfrom    xto    yfrom    yto    zfrom    zto aperture [orientation]
+//
+// <add metadata, recommended>
+id  xfrom    xto    yfrom    yto    zfrom   zto  aperture  orientation
+ 1    0.0     1.0     0.5     0.5     0.0    1.0  0.000100   2
+```
 
 For linear and planar measures, sample scan lines and scan planes are chosen
 uniformly in the sub-zone that is being sampled.
 
-For JSON output, see `ofrac.ofrac.p_system`, or run
+For documenttion of JSON output, see `ofrac.p_system`, or run
 
-    $ pdoc ofrac.ofrac.p_system
+    $ pdoc ofrac.p_system
 
 AUTHOR: Ken Walton, kmwalton@uoguelph.ca
-Licenced under GNU GPLv3
+
+LICENCE: GNU GPLv3
+
 Documentation intended to work with pdoc3.
 
-TODO: - reimplemnt superposition of FILES
+TODO:
+- refactor and use "new" ofracs methods
+- reimplemnt superposition of FILES
 - reimplement --batch-dir and table output
 
 """
@@ -83,12 +84,14 @@ import json
 try:
     from ofrac.ofracs import parse as parse_dfn
     from ofrac.ofracs import OFrac
-    from ofrac.ofrac.p_system import *
+    from ofrac.p_system import *
+    from ofrac.p_system.constants import *
 except ModuleNotFoundError:
     # accommodate "old style" PYTHONPATHing to within this module
     from ofracs import parse as parse_dfn
     from ofracs import OFrac
-    from ofrac.p_system import *
+    from p_system import *
+    from p_system.constants import *
 
 __VERBOSITY__ = 0
 """Module level verbosity"""
@@ -99,28 +102,35 @@ __VERBOSITY__ = 0
 #
 def _organize_PXXResults(results_list):
     """
-    Organizes a list of P-system Result objects into a nested dictionary:
-    dict[MetricType][Direction] = ResultObject
+    Organizes a list of P-system Result objects into a flat dictionary
+    with keys matching their formatted string prefixes 
+    (e.g., 'P10-x', 'P20-yz', 'P30').
     """
-    organized = defaultdict(dict)
+    organized = {}
     
     for result in results_list:
-        # 1. Extract the base metric name (e.g., 'P10Result' becomes 'P10')
+        # 1. Extract the base metric name (e.g., 'P10Result' -> 'P10')
         metric_type = type(result).__name__.replace('Result', '')
         
-        # 2. Safely find the direction attribute based on the tuple type
+        # 2. Build the specific key based on the object's dimensionality
         if hasattr(result, 'd_scan'):
-            direction = result.d_scan
-        elif hasattr(result, 'd_perp'):
-            direction = result.d_perp
-        else:
-            direction = 'All'  # 3D metrics (P30, P32, P33) apply to the whole zone
+            # 1D metrics
+            key = f"{metric_type}-{result.d_scan}"
             
-        # 3. Store the result object directly
-        organized[metric_type][direction] = result
+        elif hasattr(result, 'd_perp'):
+            # 2D metrics (Assumes the PERP dictionary is available in this scope)
+            direction_str = PERP[result.d_perp]
+            key = f"{metric_type}-{direction_str}"
+            
+        else:
+            # 3D metrics have no suffix
+            key = metric_type
+            
+        # 3. Store the result
+        organized[key] = result
         
-    # Convert defaultdict back to a standard dict for clean JSON serialization
-    return {k: dict(v) for k, v in organized.items()}
+    return organized
+
 
 def _get_json_context(args_json):
     """Returns a context manager for a file, stdout, or a 'do-nothing' context."""
@@ -133,23 +143,6 @@ def _get_json_context(args_json):
     # Standard file path
     return open(args_json, 'w')
 
-
-##############################################################################
-#
-#  some useful conversions between orientation strings and integer indices
-#
-# direction string to direction index mapping
-DIR  = { "x":0, "y":1, "z":2 }
-# RFGen orientation index to orientation string mapping
-INDO = { 1:"xy", 2:"xz", 3:"yz" }
-# orientation string to RFGen orientation index mapping
-OIND = { "xy":1, "xz":2, "yz":3 , \
-         "yx":1, "zx":2, "zy":3 }
-# direction string to perpendicular orientation
-# orientation string to perpendicular direction string
-PERP = { "x":"yz", "y":"xz", "z":"xy", \
-         "yz":"x", "xz":"y", "xy":"z", \
-         "zy":"x" ,"zx":"y" ,"yx":"z" }
 
 def ofrac2ftuple( ofx ):
     """convert an OFrac object to this script's internal representation
