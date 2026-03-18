@@ -49,7 +49,11 @@ omitted/altered, but the core 'xfrom ... zto' must be present
 For linear and planar measures, sample scan lines and scan planes are chosen
 uniformly in the sub-zone that is being sampled.
 
-AUTHOR: Ken Walton, kmwalton@g360group.org.
+For JSON output, see `ofrac.ofrac.p_system`, or run
+
+    $ pdoc ofrac.ofrac.p_system
+
+AUTHOR: Ken Walton, kmwalton@uoguelph.ca
 Licenced under GNU GPLv3
 Documentation intended to work with pdoc3.
 
@@ -66,22 +70,69 @@ import traceback
 import glob
 import os
 import datetime
+import contextlib
 import multiprocessing
 from random import uniform
 from math import log10, floor
 from itertools import chain,product
-from collections import deque
+from collections import deque, defaultdict
+from typing import NamedTuple
+
+import json
 
 try:
     from ofrac.ofracs import parse as parse_dfn
     from ofrac.ofracs import OFrac
+    from ofrac.ofrac.p_system import *
 except ModuleNotFoundError:
     # accommodate "old style" PYTHONPATHing to within this module
     from ofracs import parse as parse_dfn
     from ofracs import OFrac
+    from ofrac.p_system import *
 
 __VERBOSITY__ = 0
 """Module level verbosity"""
+
+##############################################################################
+#
+#  helpers
+#
+def _organize_PXXResults(results_list):
+    """
+    Organizes a list of P-system Result objects into a nested dictionary:
+    dict[MetricType][Direction] = ResultObject
+    """
+    organized = defaultdict(dict)
+    
+    for result in results_list:
+        # 1. Extract the base metric name (e.g., 'P10Result' becomes 'P10')
+        metric_type = type(result).__name__.replace('Result', '')
+        
+        # 2. Safely find the direction attribute based on the tuple type
+        if hasattr(result, 'd_scan'):
+            direction = result.d_scan
+        elif hasattr(result, 'd_perp'):
+            direction = result.d_perp
+        else:
+            direction = 'All'  # 3D metrics (P30, P32, P33) apply to the whole zone
+            
+        # 3. Store the result object directly
+        organized[metric_type][direction] = result
+        
+    # Convert defaultdict back to a standard dict for clean JSON serialization
+    return {k: dict(v) for k, v in organized.items()}
+
+def _get_json_context(args_json):
+    """Returns a context manager for a file, stdout, or a 'do-nothing' context."""
+    if args_json is None:
+        return contextlib.nullcontext(None)
+
+    if args_json == '-' or args_json is sys.stdout:
+        return contextlib.nullcontext(sys.stdout)
+
+    # Standard file path
+    return open(args_json, 'w')
+
 
 ##############################################################################
 #
@@ -102,13 +153,13 @@ PERP = { "x":"yz", "y":"xz", "z":"xy", \
 
 def ofrac2ftuple( ofx ):
     """convert an OFrac object to this script's internal representation
- 
+
     used here:
     ( (x0, x1, y0, y1, z0, z1, ap), orientationstring )
- 
+
     """
     ofxo = OFrac.determineFracOrientation(ofx)
- 
+
     return ( tuple(map(float, ofx.d+(ofx.ap,))), OIND[ PERP[ 'xyz'[ofxo] ] ] )
 
 class NotValidInputFile(Exception):
@@ -224,7 +275,12 @@ class SpatialZone:            # {{{
    def xSz(self): return self.c[0][1] - self.c[0][0]
    def ySz(self): return self.c[1][1] - self.c[1][0]
    def zSz(self): return self.c[2][1] - self.c[2][0]
-   def size(self,d): return self.c[d][1] - self.c[d][0]
+   def size(self,d):
+       try:
+          int(d)
+          return self.c[d][1] - self.c[d][0]
+       except ValueError:
+          return self.c[DIR[d]][1] - self.c[DIR[d]][0]
 
    def vol(self):
       return self.size(0) * self.size(1) * self.size(2)
@@ -274,6 +330,10 @@ class FractureZone:                                         #{{{
       self.zn = zn
       self.fracs = list( filter( zn.containsFracture, allFracs ) )
       self.nScan = nScan
+      self.zn_vol = self.zn.vol()
+
+   def __str__(self):
+       return str(self.zn)
 
    def iterFracs(self):
       """iterate over fractures"""
@@ -349,33 +409,12 @@ class FractureZone:                                         #{{{
          cc += count
          cm += m
 
+      size_1 = self.zn.size(DIR[dScanLine])
       if cm == 0.0:
-         return (dScanLine, float('inf'), cc, cm)
+          return P10Result(dScanLine, size_1, cc, cm, float('inf'))
       else:
-         return (dScanLine, float(cc)/cm, cc, cm)
+          return P10Result(dScanLine, size_1, cc, cm, float(cc) / cm)
 
-   def formatP10(self, p10Vals):
-      """Makes a pretty string to report the P10 (and P01) results"""
-
-      (d, p10, c, l) = p10Vals
-
-      if self.zn.size(DIR[d]) < 1e-6 :
-          return ''
-
-      try:
-           mag = int(floor(log10(p10)))
-      except ValueError:
-           mag = -1
-
-      _p10 = f'{round(p10, -mag+1):.{-mag+2}f}'
-
-      p01 = float('inf')
-      if c > 0:
-         p01 = l / float(c)
-      _p01 = f'{round(p01, mag+3):.{max(0,mag+2)}f}'
-
-      return f"P10-{d} : " \
-        + f'{_p10:12} /m  spacing-{d:} {_p01:12} m (count={c:4d}, d={l:4.1f}m)'
 
    def lengths(self):
       lengths = ( [0.0,0], [0.0,0], [0.0,0] ) # tuple of ( sum{length}, count )
@@ -472,92 +511,52 @@ class FractureZone:                                         #{{{
 
       return ( int(fracEndCount/2), fracArea, scanPlaneTotalArea )
 
-   def P20( self, dperpScanPlane, nScanPlane=None ):
+   def P20(self, dperpScanPlane, nScanPlane=None):
+        if not nScanPlane:
+            nScanPlane = self.nScan
 
-      if not nScanPlane:
-         nScanPlane = self.nScan
+        if self.zn.size(DIR[dperpScanPlane]) == 0.0:
+            nScanPlane = 1
 
-      # if this fx network is 2D...
-      if self.zn.size( DIR[dperpScanPlane] ) == 0.0:
-         nScanPlane = 1
+        fCount, fArea, spArea = self.P20_P22(dperpScanPlane, nScanPlane)
 
-      # should skip this case:
-      # if fzn.zn.size( DIR[PERP[d][0]] ) == 0.0 or fzn.zn.size( DIR[PERP[d][1]] ) == 0.0:
-      #    continue
+        if spArea == 0.0:
+            return P20Result(dperpScanPlane, fCount, spArea, float('inf'))
+        return P20Result(dperpScanPlane, fCount, spArea, float(fCount) / spArea)
 
-      (fCount, fArea, spArea) = self.P20_P22(dperpScanPlane, nScanPlane)
-      if spArea == 0.0:
-         return ( dperpScanPlane, float('inf'), fCount, spArea )
-      return ( dperpScanPlane, float(fCount)/spArea, fCount, spArea )
+   def P22(self, dperpScanPlane, nScanPlane=None):
+        if not nScanPlane:
+            nScanPlane = self.nScan
 
-   def formatP20( self, p20Data ):
-      """Make a nice string of P20 data, or empty string if the p20Data is for
-      an inapplicable direction/orientation.
-      """
-      (d, p20, c, a) = p20Data
-      return "P20-{:2s}: {:12.3f} /m^2 (count={:6d}, A={:4.1f}m^2)".format( PERP[d], p20, c, a )
+        if self.zn.size(DIR[dperpScanPlane]) == 0.0:
+            nScanPlane = 1
 
-   def P22( self, dperpScanPlane, nScanPlane=None ):
-      if not nScanPlane:
-         nScanPlane = self.nScan
+        fCount, fArea, spArea = self.P20_P22(dperpScanPlane, nScanPlane)
+        size_1, size_2 = [self.zn.size(_d) for _d in PERP[dperpScanPlane]]
 
-      if self.zn.size( DIR[dperpScanPlane] ) == 0.0:
-         nScanPlane = 1
-
-      (fCount, fArea, spArea) = self.P20_P22(dperpScanPlane, nScanPlane)
-      if spArea == 0.0:
-         return (dperpScanPlane, float('inf'), fCount, spArea )
-      return (dperpScanPlane, float(fArea)/spArea, fCount, spArea )
-
-   def formatP22( self, p22data ):
-      (d, p22, c, a) = p22data
-
-      if self.zn.size( DIR[PERP[d][0]] ) == 0.0 or self.zn.size( DIR[PERP[d][1]] ) == 0.0:
-         return ''
-
-      return "P22-{:2s}: {:12.6f}     (count={:6d}, A={:4.1f}m^2)".format( PERP[d], p22, c, a )
+        if spArea == 0.0:
+            return P22Result(dperpScanPlane, size_1, size_2, fCount, spArea, float('inf'))
+        return P22Result(dperpScanPlane, size_1, size_2, fCount, spArea, float(fArea) / spArea)
 
    def P30(self):
-      if self.zn.vol() == 0:
-         return float('inf')
-      return len(self.fracs) / self.zn.vol()
-
-   def formatP30(self, p30data):
-       nfx=len(self.fracs) # not ideal to recalculate this
-       if self.zn.vol() > 1.0e-6:
-          return "P30:    {:12.3f} /m^3  (count={:6d}, V={:4.1f}m^3)".format(
-                      p30data, nfx, self.zn.vol())
+        f_count = len(self.fracs)
+        if self.zn_vol == 0:
+            return P30Result(f_count, self.zn_vol, float('inf'))
+        return P30Result(f_count, self.zn_vol, f_count / self.zn_vol)
 
    def P32(self):
-      if self.zn.vol() == 0:
-         return float('inf')
+        if not hasattr(self, '_fxA'):
+            self._fxA = sum(map(FractureZone.fracArea, self.fracs))
 
-      if not hasattr(self,'_fxA'):
-          self._fxA = sum(map(FractureZone.fracArea, self.fracs))
-
-      return  self._fxA/self.zn.vol()
-
-   def formatP32(self, p32Data, fxA=None):
-      if fxA is None and not hasattr(self,'_fxA'):
-         self._fxA = sum( map( FractureZone.fracArea, self.fracs ) )
-
-      if self.zn.vol() > 1.0e-6:
-         return "P32:    {:12.5g}  (A={:.5g}m^2 / V={:4.1f}m^3)".format(
-                      p32Data, self._fxA, self.zn.vol())
+        if self.zn_vol < 1e-6:
+            return P32Result(self.zn_vol, self._fxA, float('inf'))
+        return P32Result(self.zn_vol, self._fxA, self._fxA / self.zn_vol)
 
    def P33(self):
-      if self.zn.vol() == 0:
-         return float('inf')
-      return sum( map( FractureZone.fracVol, self.fracs ) ) / self.zn.vol()
-
-   def formatP33(self, p33Data, fxV=None):
-      if fxV is None:
-         fxV = sum( map( FractureZone.fracVol, self.fracs ) )
-
-      if self.zn.vol() > 1.0e-6:
-         return "P33:    {:12.5g}  (V={:.5g}m^3 / V={:4.1f}m^3)".format(
-                      p33Data, fxV, self.zn.vol())
-
+        fx_vol = sum(map(FractureZone.fracVol, self.fracs))
+        if self.zn_vol < 1e-6:
+            return P33Result(self.zn_vol, fx_vol, float('inf'))
+        return P33Result(self.zn_vol, fx_vol, fx_vol / self.zn_vol)
 
 #}}}
 
@@ -584,25 +583,25 @@ def fixOofLastFrac():
 
 
 # for multiprocessing
-def formatFuncWArgs( tup ):
-   ( fmt, func, funcarg ) = tup
-   if funcarg:
-      return fmt(func(funcarg))
-   else:
-      return fmt(func())
+def _run_calc_job(task_args):
+    """Unpacks and runs a FractureZone method with its arguments."""
+    fzn, (method, arg) = task_args
 
-# for multiprocessing
-def calcAndCalcFormatter( tup ):
-   ( fmt, func, funcarg ) = tup
-   if funcarg:
-      return (func(funcarg), fmt)
-   else:
-      return (func(), fmt)
+    # If the method doesn't take an extra direction argument (like P30, P32, P33)
+    if arg is None:
+        return method(fzn)
+
+    # If it does take an argument (like P10, P20, P22)
+    return method(fzn, arg)
+
 
 def doEverything(args, batchDir=''):
 
     fracs = []
     fracFileSubZones = []
+
+    # collect data for JSON as its generated
+    dict4json = {}
 
     # iterate through all files (or problem prefixes) found on command line
     for fnin in args.FILES:
@@ -653,6 +652,8 @@ def doEverything(args, batchDir=''):
         print( "========= Domain =========" )
         print( "Domain: {}; size: {} x {} x {}".format(str(dom), dom.xSz(),dom.ySz(),dom.zSz()) )
 
+    dict4json['Domain'] = str(dom)
+
     # determine sample zones
     sampleZn = []
     if args.sample_zones:
@@ -664,10 +665,15 @@ def doEverything(args, batchDir=''):
 
 
     results = []
-    """
-        List of tuples for each sample zone, which are resluts of
-            calcAndCalcFormatter( formatter, function, direciton string )
-    """
+
+    _jobs = list(chain(
+        [(FractureZone.P10, d,) for d in sorted(DIR)],
+        [(FractureZone.P20, d,) for d in sorted(DIR)],
+        [(FractureZone.P22, d,) for d in sorted(DIR)],
+        [(FractureZone.P30, None,),
+         (FractureZone.P32, None,),
+         (FractureZone.P33, None,),]
+    ))
 
     if args.max_cpus == 1:
         for (izn, zn) in enumerate(sampleZn):
@@ -675,32 +681,29 @@ def doEverything(args, batchDir=''):
             fzn = FractureZone(zn,fracs)
             fzn.setNScan(args.n)
 
-            results.append( list( map( calcAndCalcFormatter, chain(
-                    [(fzn.formatP10, fzn.P10, d,) for d in sorted(DIR)],
-                    [(fzn.formatP20, fzn.P20, d,) for d in sorted(DIR)],
-                    [(fzn.formatP22, fzn.P22, d,) for d in sorted(DIR)],
-                    [(fzn.formatP30, fzn.P30, None,),
-                     (fzn.formatP32, fzn.P32, None,),
-                     (fzn.formatP33, fzn.P33, None,),]
-                    )
-                )))
+            _d = { 'SubDomain':str(zn), 'nscan':args.n, 'nfracs':len(fzn.fracs), }
+
+            _r = list(map(_run_calc_job, ((fzn, j) for j in _jobs)))
+
+            results.append(_r)
+            _d.update(_organize_PXXResults(_r))
+            dict4json[f'Zone{izn}'] = _d
 
     else:
-        with multiprocessing.Pool(args.max_cpus) as pool:
 
+        with multiprocessing.Pool(args.max_cpus) as pool:
             for (izn, zn) in enumerate(sampleZn):
 
                 fzn = FractureZone(zn,fracs)
                 fzn.setNScan(args.n)
 
-                results.append( pool.map( calcAndCalcFormatter, chain(
-                    [(fzn.formatP10, fzn.P10, d,) for d in sorted(DIR)],
-                    [(fzn.formatP20, fzn.P20, d,) for d in sorted(DIR)],
-                    [(fzn.formatP22, fzn.P22, d,) for d in sorted(DIR)],
-                    [(fzn.formatP30, fzn.P30, None,),
-                     (fzn.formatP32, fzn.P32, None,),
-                     (fzn.formatP33, fzn.P33, None,),]
-                )))
+                _d = { 'range':str(zn), 'nscan':args.n, 'nfracs':len(fzn.fracs), }
+
+                _r = pool.map(_run_calc_job, ((fzn, j) for j in _jobs))
+                results.append(_r)
+
+                _d.update(_organize_PXXResults(_r))
+                dict4json[f'Zone{izn}'] = _d
 
 
     # get ready for batch printing
@@ -744,6 +747,7 @@ Sample Zones:
 
     for (izn, zn) in enumerate(sampleZn):
 
+        # r is a list of 2-tuples of the data and a formatter
         r = results[izn]
 
         if args.batch_dir:
@@ -757,8 +761,9 @@ Sample Zones:
 
         else:
             print( "--- {} ---".format(str(zn) ) )
-                # print results
-        print('\n'.join( map(lambda v:v[1](v[0]), r)))
+
+        # print results
+        print('\n'.join(map(str, r)))
 
 
         # zone header
@@ -766,16 +771,16 @@ Sample Zones:
         # Auxvar
         for i,d in enumerate(sorted(DIR)):
             try :
-                mag = int(floor(log10(r[i][0][1])))
-                _v = f'{round(r[i][0][1], -mag+1):.{-mag+2}f}'
-                _1dv = f'{round(1./r[i][0][1], mag+3):.{max(0,mag+2)}f}'
+                mag = int(floor(log10(r[i][-1])))
+                _v = f'{round(r[i][1], -mag+1):.{-mag+2}f}'
+                _1dv = f'{round(1./r[i][1], mag+3):.{max(0,mag+2)}f}'
             except ValueError:
                 _v = '-'
                 _1dv = '-'
             tecout += f'''AUXDATA P10{d}="{_v}"\n'''
             tecout += f'''AUXDATA Spacing{d}="{_1dv}"\n'''
-        tecout += f'''AUXDATA P32="{r[10][0]:.3g}"\n'''
-        tecout += f'''AUXDATA P33="{r[11][0]:.3g}"\n'''
+        tecout += f'''AUXDATA P32="{r[10].P32:.3g}"\n'''
+        tecout += f'''AUXDATA P33="{r[11].P33:.3g}"\n'''
 
         # length stats ... P21???
         lengths = fzn.lengths()
@@ -802,6 +807,11 @@ Sample Zones:
         with open(args.tp_out,'w') as fout:
             fout.write(tecout)
 
+
+    # do JSON output
+    with _get_json_context(args.json_out) as fout:
+        if fout:
+            save_json(dict4json, fout, indent=2)
 
 
 
@@ -868,6 +878,15 @@ if __name__ == '__main__':
     parser.add_argument( '--tp-out', type=str,
           help='Name of the tecplot file to write to.' )
 
+    parser.add_argument( '--json-out', metavar='JSON_FILE',
+        type=str,
+        nargs='?',
+        default=None, const='-',
+        help='''The name of a JSON-format output file. If this argument is
+        provided with '-' or without a filename, JSON data will be printed to
+        stdout''',
+    )
+
     # command line args
     args = parser.parse_args()
 
@@ -901,7 +920,6 @@ if __name__ == '__main__':
             finally:
                 os.chdir(scriptCallDir)
 
-
     else:
         args.batch_dir = [] # "fix" the default 'None'
         try:
@@ -909,3 +927,5 @@ if __name__ == '__main__':
         except NotValidInputFile as e:
             print(e, file=sys.stderr)
             sys.exit(1)
+
+    sys.exit(0)
