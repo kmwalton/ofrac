@@ -1,4 +1,4 @@
-#!python
+#!/usr/bin/env python
 """Groups fractures in bins based on lengths and reports
 count of fractures per bin (frequency)
 
@@ -19,6 +19,8 @@ import numpy as np
 import scipy.stats
 from tabulate import tabulate
 
+from decimal import Decimal
+
 try:
     from ofrac.ofracs import OFrac,OFracGrid,NotValidOFracGridError
 except ModuleNotFoundError:
@@ -32,7 +34,7 @@ class OFracBinner():
 
     def __init__(self, var, binLabels):
         self.binVar = var
-        self.binLabels = binLabels
+        self.binLabels = sorted(list( Decimal(b) for b in binLabels ))
 
     def strTecplotHeader(self):
         """Return a string for a Tecplot ASCII file header"""
@@ -75,10 +77,7 @@ class LengthBinner(OFracBinner):
 
     def __init__(self, files, bins):
 
-        super().__init__(
-                'Length [m]',
-                list( f'{b:.0f}' for b in bins ),
-                )
+        super().__init__('Length [m]', bins,)
 
         if len(files) > 1:
             raise NotImplementedError('TODO: reuse code to merge grids')
@@ -137,8 +136,8 @@ class LengthBinner(OFracBinner):
 
             self.auxd[c].extend( [
                 ('N',stats.nobs,''),
-                ('ARITHMETICMEAN',f'{stats.mean:.1f}',''),
-                ('GEOMEAN',f'{gmean:.1f}',''),
+                ('ARITHMETICMEAN',f'{stats.mean:.2f}',''),
+                ('GEOMEAN',f'{gmean:.2f}',''),
                 ('MIN_MAX',f'{stats.minmax[0]:.1f}..{stats.minmax[1]:.1f}',''),
             ] )
 
@@ -212,9 +211,7 @@ if __name__ == '__main__':
     ofracs.__VERBOSITY__ = args.verbosity
 
     try:
-        b = LengthBinner(args.FILES,
-            sorted(float(x) for x in args.bins.replace(',',' ').split())
-            )
+        b = LengthBinner(args.FILES, args.bins.replace(',',' ').split())
     except NotValidOFracGridError as e:
         print(str(e), file=sys.stderr)
         sys.exit(-1)
