@@ -134,3 +134,7 @@ dmypy.json
 # annoying Windows Stuff
 *.un~
 *.py~
+
+# annoying MacOS stuff
+.DS_Store
+._.DS_Store
