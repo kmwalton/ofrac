@@ -1,12 +1,14 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Compute P10 and produce raw fracture spacing data.
 
 Parse one or more DFN files using ofracs, merge all resulting OFracGrid
-objects into a single grid, run random scan-line sampling, and write a
-JSON summary.
+objects into a single grid, run random scan-line sampling per zone, and
+write a JSON summary.  If no zones are specified the whole merged domain
+is used as the single zone.
 """
 
 import argparse
+import copy
 import datetime
 import getpass
 import json
@@ -17,6 +19,7 @@ from decimal import Decimal
 
 import numpy as np
 from ofrac import ofracs
+from ofrac.ofrac.aabbox import AABBox
 
 
 # ---------------------------------------------------------------------------
@@ -30,29 +33,14 @@ def _decimal_default(obj):
     raise TypeError(f"Object of type {type(obj)} is not JSON serialisable")
 
 
-def load_and_merge(dfn_files: list[str], n_scan_lines: int) -> ofracs.OFracGrid:
+def load_and_merge(dfn_files: list[str]) -> ofracs.OFracGrid:
     """
-    Parse every DFN_FILE with ofracs.parse(), optionally echoing the first
-    n_scan_lines of each file to stderr for diagnostic purposes, then merge
-    all resulting OFracGrid objects into one and return it.
+    Parse every DFN_FILE with ofracs.parse(), merge all resulting OFracGrid
+    objects into one and return it.
     """
     grids = []
 
     for path in dfn_files:
-        # --- optional diagnostic echo ---
-        if n_scan_lines > 0:
-            try:
-                with open(path, "r", encoding="utf-8", errors="replace") as fh:
-                    head = [next(fh) for _ in range(n_scan_lines)]
-                print(f"=== {path} (first {len(head)} lines) ===", file=sys.stderr)
-                for line in head:
-                    print(line, end="", file=sys.stderr)
-                print(file=sys.stderr)
-            except StopIteration:
-                pass  # file has fewer than n_scan_lines lines – that's fine
-            except OSError as exc:
-                print(f"warning: could not preview {path}: {exc}", file=sys.stderr)
-
         # --- parse ---
         try:
             grid = ofracs.parse(path)
@@ -69,6 +57,19 @@ def load_and_merge(dfn_files: list[str], n_scan_lines: int) -> ofracs.OFracGrid:
     # merge: the first grid's .merge() accepts the rest as *args
     merged = grids[0].merge(*grids[1:])
     return merged
+
+
+def zone_grid(merged: ofracs.OFracGrid, box: AABBox) -> ofracs.OFracGrid:
+    """Return a copy of *merged* with its domain clipped to *box*.
+
+    Uses setDomainSize(origin, size) which also excludes any gridlines and
+    fractures that fall outside the new domain bounds.
+    """
+    grid = copy.deepcopy(merged)
+    origin = [box.x0, box.y0, box.z0]
+    size   = [box.x1 - box.x0, box.y1 - box.y0, box.z1 - box.z0]
+    grid.setDomainSize(origin, size)
+    return grid
 
 
 def make_fx_array(grid: ofracs.OFracGrid) -> tuple[np.ndarray, np.ndarray]:
@@ -94,24 +95,6 @@ def make_fx_array(grid: ofracs.OFracGrid) -> tuple[np.ndarray, np.ndarray]:
     fx     = np.array(rows,    dtype=np.float64)
     orient = np.array(orients, dtype=np.int8)
     return fx, orient
-
-
-#: Names for the 6 coordinate columns, matching OFrac.d order
-FX_COL_NAMES = ("xfrom", "xto", "yfrom", "yto", "zfrom", "zto")
-
-
-def make_sort_indices(fx: np.ndarray) -> list[np.ndarray]:
-    """Return a list of 6 index arrays, one per coordinate column.
-
-    ``sort_idx[c]`` is the array of row indices that would sort column ``c``
-    of ``fx`` into ascending order (stable sort, so equal values preserve
-    their original relative order).
-
-    Usage example::
-
-        sorted_xfrom = fx[sort_idx[0], 0]   # xfrom values in ascending order
-    """
-    return [np.argsort(fx[:, c], kind="stable") for c in range(fx.shape[1])]
 
 
 # ---------------------------------------------------------------------------
@@ -284,65 +267,9 @@ def run_scan_lines(
     return results
 
 
-def grid_to_dict(grid: ofracs.OFracGrid) -> dict:
-    """Summarise an OFracGrid as a plain dict suitable for JSON serialisation."""
-    gl = grid.getGridLines()  # list of 3 numpy arrays
-
-    return {
-        "domain_origin": [float(v) for v in grid.domainOrigin],
-        "domain_size":   [float(v) for v in grid.domainSize],
-        "domain_end":    [float(v) for v in grid.getDomainEnd()],
-        "fx_count":      grid.getFxCount(),
-        "fx_counts_by_orientation": {
-            "yz": grid.getFxCounts()[0],
-            "xz": grid.getFxCounts()[1],
-            "xy": grid.getFxCounts()[2],
-        },
-        "gridline_counts": {
-            "nx": len(gl[0]),
-            "ny": len(gl[1]),
-            "nz": len(gl[2]),
-        },
-        "gridlines": {
-            "x": [float(v) for v in gl[0]],
-            "y": [float(v) for v in gl[1]],
-            "z": [float(v) for v in gl[2]],
-        },
-        "fractures": [
-            {
-                "xfrom": float(f[0]), "xto": float(f[1]),
-                "yfrom": float(f[2]), "yto": float(f[3]),
-                "zfrom": float(f[4]), "zto": float(f[5]),
-                "aperture": float(f[6]),
-            }
-            for f in grid.iterFracs()
-        ],
-        "metadata": grid.metadata,
-    }
-
-
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
-
-def open_json_output(json_arg: str | None):
-    """
-    Return a writable file object for JSON output.
-
-    --json omitted  → None     (no JSON output)
-    --json -        → stdout
-    --json FILE     → opened file
-    """
-    if json_arg is None:
-        return None
-    if json_arg == "-":
-        return sys.stdout
-    try:
-        return open(json_arg, "w", encoding="utf-8")
-    except OSError as exc:
-        print(f"error: cannot open JSON output file: {exc}", file=sys.stderr)
-        sys.exit(1)
-
 
 def collect_run_metadata(args: argparse.Namespace) -> dict:
     """Return a dict of provenance information about this invocation."""
@@ -402,7 +329,7 @@ def _print_initial_message(
 
 
 def _print_scan_summary(summary: dict[str, dict]) -> None:
-    """Print the completion summary table to stderr."""
+    """Print the scan-line summary table to stderr."""
     axis_label = {"x": "x (yz-fracs)", "y": "y (xz-fracs)", "z": "z (xy-fracs)"}
     header = f"{'Axis':<14} {'N lines':>8} {'Crossings':>10} {'Tot. length':>12} {'P10':>10} {'Spacing':>10}"
     print("\nScan-line summary:", file=sys.stderr)
@@ -419,6 +346,24 @@ def _print_scan_summary(summary: dict[str, dict]) -> None:
             f"{spacing_str:>10}",
             file=sys.stderr,
         )
+
+
+def _print_zone_summary(
+    zone_label: str,
+    grid: ofracs.OFracGrid,
+    summary: dict[str, dict],
+) -> None:
+    """Print the per-zone banner and scan-line summary table to stderr."""
+    origin = [float(v) for v in grid.getDomainStart()]
+    end    = [float(v) for v in grid.getDomainEnd()]
+    size   = [e - o for o, e in zip(origin, end)]
+    print(
+        f"\n{zone_label}: {grid.getFxCount()} fractures, "
+        f"domain {size[0]:.3g} × {size[1]:.3g} × {size[2]:.3g} "
+        f"(origin {origin[0]:.3g},{origin[1]:.3g},{origin[2]:.3g})",
+        file=sys.stderr,
+    )
+    _print_scan_summary(summary)
 
 
 def open_json_output(json_file: str) -> tuple:
@@ -455,9 +400,22 @@ def build_parser() -> argparse.ArgumentParser:
         default=10,
         help=(
             "Number of random scan lines to generate per orientation axis "
-            "(default: 10).  Also controls how many header lines of each DFN "
-            "file are echoed to stderr for diagnostics; pass 0 to suppress "
-            "both."
+            "(default: 10; minimum: 1)."
+        ),
+    )
+
+    parser.add_argument(
+        "-z", "--zone",
+        metavar=("X0", "X1", "Y0", "Y1", "Z0", "Z1"),
+        nargs=6,
+        type=float,
+        action="append",
+        dest="zones",
+        default=None,
+        help=(
+            "Define an analysis zone as six floats in blockspec order: "
+            "x0 x1 y0 y1 z0 z1.  May be repeated for multiple zones.  "
+            "If omitted, the full merged domain is used as a single zone."
         ),
     )
 
@@ -492,36 +450,58 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
-    if args.n_scan_lines < 0:
-        parser.error("--n-scan-lines must be >= 0")
+    if args.n_scan_lines < 1:
+        parser.error("--n-scan-lines must be >= 1")
 
     to_stdout = (args.json_file == "-")
 
     metadata = collect_run_metadata(args)
 
-    merged = load_and_merge(args.dfn_files, args.n_scan_lines)
+    merged = load_and_merge(args.dfn_files)
     if not to_stdout:
         _print_initial_message(len(args.dfn_files), merged)
 
-    # --- build coordinate and orientation arrays, plus sort-index arrays ---
-    fx, orient = make_fx_array(merged)           # (N,6) float64 and (N,) int8
-    sort_idx   = make_sort_indices(fx)           # list of 6 argsort index arrays
-    orient_idx = build_orient_indices(fx, orient)
+    # --- build zone list ---
+    # Each zone is an (label, AABBox) pair.  When no --zone flags are given,
+    # fall back to the full merged domain as "zone_0".
+    if args.zones:
+        zones = [
+            (f"zone_{i}", AABBox(v[0], v[2], v[4], v[1], v[3], v[5]))
+            for i, v in enumerate(args.zones)
+        ]
+    else:
+        s = merged.getDomainStart()
+        e = merged.getDomainEnd()
+        zones = [("zone_0", AABBox(float(s[0]), float(s[1]), float(s[2]),
+                                   float(e[0]), float(e[1]), float(e[2])))]
 
-    # --- run scan lines ---
+    # --- run analysis per zone ---
     rng = np.random.default_rng(args.seed)
-    scan_results = run_scan_lines(orient_idx, merged, args.n_scan_lines, rng)
+    zone_data: dict[str, dict] = {}
 
-    scan_summary = summarise_scan_results(scan_results)
-    if not to_stdout:
-        _print_scan_summary(scan_summary)
+    for label, box in zones:
+        grid = zone_grid(merged, box)
+
+        fx, orient = make_fx_array(grid)
+        orient_idx = build_orient_indices(fx, orient)
+
+        scan_results = run_scan_lines(orient_idx, grid, args.n_scan_lines, rng)
+        scan_summary = summarise_scan_results(scan_results)
+
+        if not to_stdout:
+            _print_zone_summary(label, grid, scan_summary)
+
+        zone_data[label] = {
+            "zone_bbox":    list(box),       # [x0, y0, z0, x1, y1, z1]
+            "scan_lines":   scan_results,
+            "scan_summary": scan_summary,
+        }
 
     # --- JSON output ---
     json_out, indent = open_json_output(args.json_file)
     data = {
-        "metadata":     metadata,
-        "scan_lines":   scan_results,
-        "scan_summary": scan_summary,
+        "metadata": metadata,
+        "zones":    zone_data,
     }
     json.dump(data, json_out, indent=indent, default=_decimal_default)
     print(file=json_out)
