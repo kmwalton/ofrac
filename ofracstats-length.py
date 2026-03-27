@@ -82,7 +82,7 @@ class LengthBinner(OFracBinner):
         if len(files) > 1:
             raise NotImplementedError('TODO: reuse code to merge grids')
 
-        self.bins = bins
+        self.bins = [ float(v) for v in bins ]
 
         # store an empty OFracGrid
         self.grid = OFracGrid()
@@ -117,7 +117,7 @@ class LengthBinner(OFracBinner):
         for i,c in enumerate('xyz'):
             self.histo[c] = np.histogram(
                     length_data[i],
-                    bins = self.bins+[1e308])[0]
+                    bins = self.bins+[1e308,])[0]
 
             if len(length_data[i]) == 0:
                 self.auxd[c].extend( [
