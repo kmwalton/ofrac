@@ -5,9 +5,14 @@ WARNING. VERY INCOMPLETE IN TERMS OF COVERAGE OF TESTS.
 
 import unittest
 import itertools
+import pickle
+from decimal import Decimal
+
 import numpy as np
 
-from ofrac.ofracs import (OFrac, OFracGrid)
+from ofrac.ofracs import (OFrac, OFracArray, OFracGrid)
+from ofrac.ofracs import (CO_SCALE, AP_SCALE, STORE_DTYPE,
+        _co2i, _i2co, _ap2i, _i2ap)
 
 
 class TestOFracGrid(unittest.TestCase):
@@ -90,6 +95,411 @@ class TestOFracGrid(unittest.TestCase):
 
         h.setDomainSize((0,0,0),(0.4,0.4,0.4))
         self.assertEqual(h.getFxCount(), 0)
+
+
+class TestQuantization(unittest.TestCase):
+    """Fractures are stored as integer counts of N_COORD_DIG / N_APERT_DIG"""
+
+    def test_coord_roundtrip(self):
+        for v, i, s in [
+                ('0',            0,          '0.000'),
+                ('0.001',        1,          '0.001'),
+                ('-0.001',      -1,         '-0.001'),
+                ('1.234',     1234,          '1.234'),
+                ('-45.6',   -45600,        '-45.600'),
+                ('1000000.999', 1000000999, '1000000.999'),
+                ]:
+            with self.subTest(v=v):
+                self.assertEqual(_co2i(v), i)
+                self.assertEqual(str(_i2co(i)), s)
+
+    def test_aperture_roundtrip(self):
+        for v, i, s in [
+                ('0',          0, '0.000000'),
+                ('0.000001',   1, '0.000001'),
+                ('0.0001234', 123, '0.000123'),
+                ]:
+            with self.subTest(v=v):
+                self.assertEqual(_ap2i(v), i)
+                self.assertEqual(str(_i2ap(i)), s)
+
+    def test_quantizes_to_precision(self):
+        """Values finer than the stored precision are rounded, not kept"""
+        self.assertEqual(_co2i(1.2345), 1234)
+        self.assertEqual(_ap2i(1.23456789e-4), 123)
+
+    def test_equality_is_exact(self):
+        """Coordinates that should coincide must compare equal.
+
+        This is what integer storage buys: it is why a fracture's orientation
+        can be found by testing coordinates for equality, and why fracture
+        faces land on grid lines.
+        """
+        g = OFracGrid(domainSize=(1.,1.,1.), fx=[
+            (0., 1., 0., 1., 0.3, 0.3, 0.001),
+            (0., 1., 0.3, 0.3, 0., 1., 0.001),
+            (0.3, 0.3, 0., 1., 0., 1., 0.001),
+        ])
+        self.assertEqual(g.getFxCounts(), (1,1,1))
+        for a in range(3):
+            self.assertIn(Decimal('0.300'), g.getGridLines(a).tolist())
+
+
+class TestStorageRange(unittest.TestCase):
+    """32-bit storage spans +/-2147 km; leaving it must not wrap silently"""
+
+    def _grid(self):
+        return OFracGrid(domainOrigin=(0.,0.,0.), domainSize=(10.,10.,10.),
+                fx=[(0., 10., 0., 10., 5., 5., 0.0001)])
+
+    def test_range_covers_physical_domains(self):
+        self.assertGreater(np.iinfo(STORE_DTYPE).max/CO_SCALE, 2e6)
+
+    def test_input_beyond_range_is_rejected(self):
+        with self.assertRaises(OverflowError):
+            OFracGrid(fx=[(0., 3e6, 0., 10., 5., 5., 0.0001)])
+
+    def test_scale_beyond_range_raises(self):
+        g = self._grid()
+        with self.assertRaises(ValueError):
+            g.scale((1e6, 1., 1.))
+        # the offending write never landed
+        self.assertEqual(g._fx[0].d[1], Decimal('10.000'))
+
+    def test_translate_beyond_range_raises(self):
+        g = self._grid()
+        with self.assertRaises(ValueError):
+            g.translate((3e6, 0., 0.))
+        self.assertEqual(g._fx[0].d[0], Decimal('0.000'))
+
+    def test_ordinary_moves_are_unaffected(self):
+        g = self._grid()
+        g.scale((1000., 1000., 1000.))
+        g.translate((100000., 0., 0.))
+        self.assertEqual(g._fx[0].d[0], Decimal('100000.000'))
+        self.assertEqual(g._fx[0].d[1], Decimal('110000.000'))
+
+
+class TestOFracArray(unittest.TestCase):
+    """The numpy-backed store that replaced the list of OFrac objects"""
+
+    FX = [
+        (0., 10., 0., 10., 5.,  5.,  0.0001),
+        (0., 10., 3.,  3.,  0., 10.,  0.00012),
+        (7.,  7.,  0., 10., 0., 10.,  0.000345),
+    ]
+
+    def _grid(self):
+        return OFracGrid(domainOrigin=(0.,0.,0.), domainSize=(10.,10.,10.),
+                fx=self.FX)
+
+    def test_grid_uses_a_store(self):
+        g = self._grid()
+        self.assertIsInstance(g._fx, OFracArray)
+        self.assertEqual(len(g._fx), 3)
+        self.assertEqual(g._fx.coords.dtype, STORE_DTYPE)
+        self.assertEqual(g._fx.coords.shape, (3,6))
+
+    def test_helper_arrays(self):
+        g = self._grid()
+        self.assertArrayEqual(g._fx.perp_axes, [2,1,0])
+        self.assertArrayEqual(g._fx.apertures,
+                [100, 120, 345])
+        self.assertEqual(g.getFxCounts(), (1,1,1))
+
+    def test_perp_vals_are_derived(self):
+        """Plane coordinates are computed from the coordinates, not stored"""
+        g = self._grid()
+        self.assertNotIn('_perpval', OFracArray.__slots__)
+        self.assertArrayEqual(g._fx.perp_vals,
+                [5*CO_SCALE, 3*CO_SCALE, 7*CO_SCALE])
+
+        # ...and stay right after the coordinates move
+        g.translate((1., 2., 3.))
+        self.assertArrayEqual(g._fx.perp_vals,
+                [8*CO_SCALE, 5*CO_SCALE, 8*CO_SCALE])
+
+        # ...and agree with the per-fracture method
+        self.assertEqual([f.determinePerpAxisVal()[1] for f in g.iterFracs()],
+                [_i2co(v) for v in g._fx.perp_vals])
+
+    def test_perp_vals_of_empty_store(self):
+        s = OFracArray()
+        self.assertEqual(s.perp_vals.size, 0)
+        self.assertEqual(s.perp_axes.size, 0)
+
+    def test_indexing_returns_live_views(self):
+        g = self._grid()
+        f = g._fx[1]
+        self.assertIsInstance(f, OFrac)
+        self.assertEqual(f.d[2], Decimal('3.000'))
+        self.assertIs(f.myNet, g)
+
+        # writing through the view writes into the store...
+        f.d = (0., 10., 4., 4., 0., 10.)
+        self.assertEqual(g._fx.coords[1,2], 4*CO_SCALE)
+        # ...and keeps the helper arrays in step
+        self.assertEqual(g._fx.perp_axes[1], 1)
+        self.assertEqual(g._fx.perp_vals[1], 4*CO_SCALE)
+
+        f.ap = 0.000999
+        self.assertEqual(g._fx.apertures[1], 999)
+
+    def test_view_rejects_wrong_length(self):
+        g = self._grid()
+        with self.assertRaises(ValueError):
+            g._fx[0].d = (1., 2., 3.)
+
+    def test_iteration_yields_distinct_fractures(self):
+        g = self._grid()
+        seen = [str(f) for f in g.iterFracs()]
+        self.assertEqual(len(seen), 3)
+        self.assertEqual(len(set(seen)), 3)
+
+    def test_delete(self):
+        g = self._grid()
+        g._fx.delete([0,2])
+        self.assertEqual(len(g._fx), 1)
+        self.assertEqual(g._fx[0].d[2], Decimal('3.000'))
+        self.assertArrayEqual(g._fx.perp_axes, [1])
+
+    def test_delete_is_idempotent_per_index(self):
+        g = self._grid()
+        g._fx.delete([1,1,1])
+        self.assertEqual(len(g._fx), 2)
+
+    def test_del_slice(self):
+        g = self._grid()
+        del g._fx[1:]
+        self.assertEqual(len(g._fx), 1)
+
+    def test_setitem_copies_a_row(self):
+        g = self._grid()
+        g._fx[0] = g._fx[2]
+        self.assertEqual(str(g._fx[0]), str(g._fx[2]))
+        self.assertEqual(g._fx.perp_axes[0], 0)
+
+    def test_out_of_range(self):
+        g = self._grid()
+        for i in (3, -4):
+            with self.subTest(i=i), self.assertRaises(IndexError):
+                g._fx[i]
+        self.assertEqual(str(g._fx[-1]), str(g._fx[2]))
+
+    def test_growth_preserves_data(self):
+        """Appending past the allocation must keep every earlier fracture"""
+        s = OFracArray()
+        expect = []
+        for i in range(40):
+            s.append_values(0., 10., 0., 10., float(i), float(i), 1e-4)
+            expect.append(Decimal(i).quantize(Decimal('0.001')))
+        self.assertEqual(len(s), 40)
+        self.assertArrayEqual(s.perp_vals, [i*CO_SCALE for i in range(40)])
+        self.assertEqual([f.d[4] for f in s], expect)
+
+    def test_standalone_fracture_has_its_own_store(self):
+        f = OFrac(0., 1., 0.5, 0.5, 0., 1., 0.002)
+        self.assertIsNone(f.myNet)
+        self.assertEqual(f.determinePerpAxisVal(), (1, Decimal('0.500')))
+
+        g = self._grid()
+        g.addFracture(f)
+        self.assertEqual(g.getFxCount(), 4)
+        # the grid holds a copy, not the original's row
+        self.assertIsNot(g._fx[3]._store, f._store)
+        self.assertEqual(str(g._fx[3]), str(f))
+
+    def test_copy_construction(self):
+        g = self._grid()
+        f = OFrac(fromOFrac=g._fx[0])
+        self.assertEqual(str(f), str(g._fx[0]))
+        self.assertIs(f.myNet, g)
+        # the copy is independent
+        f.d = (0., 1., 0., 1., 9., 9.)
+        self.assertEqual(g._fx[0].d[4], Decimal('5.000'))
+
+
+class TestVectorizedAccessors(unittest.TestCase):
+
+    def _grid(self):
+        return OFracGrid(domainOrigin=(0.,0.,0.), domainSize=(10.,10.,10.), fx=[
+            (0., 10., 0., 10., 5.,  5.,  0.0001),
+            (0., 10., 3.,  3.,  0., 10.,  0.00012),
+            (7.,  7.,  0., 10., 0., 10.,  0.000345),
+        ])
+
+    def assertArrayEqual(self, a, b):
+        np.testing.assert_array_equal(a, b)
+
+    def test_coordinates(self):
+        g = self._grid()
+        self.assertArrayEqual(g.getFxCoordinates(), [
+            [0., 10., 0., 10., 5., 5.],
+            [0., 10., 3., 3., 0., 10.],
+            [7., 7., 0., 10., 0., 10.],
+        ])
+
+    def test_apertures(self):
+        g = self._grid()
+        np.testing.assert_allclose(g.getFxApertures(),
+                [0.0001, 0.00012, 0.000345])
+
+    def test_perp_axes(self):
+        g = self._grid()
+        self.assertArrayEqual(g.getFxPerpAxes(), [2,1,0])
+        # ...and agrees with the per-fracture method
+        self.assertArrayEqual(g.getFxPerpAxes(),
+            [OFrac.determineFracOrientation(f) for f in g.iterFracs()])
+
+    def test_accessors_return_copies(self):
+        g = self._grid()
+        c = g.getFxCoordinates()
+        c[0,0] = -999.
+        self.assertEqual(g._fx[0].d[0], Decimal('0.000'))
+
+
+class TestStoreStaysConsistent(unittest.TestCase):
+    """Operations that move fractures must keep the helper arrays correct"""
+
+    def _grid(self):
+        return OFracGrid(domainOrigin=(0.,0.,0.), domainSize=(10.,10.,10.), fx=[
+            (0., 10., 0., 10., 5.,  5.,  0.0001),
+            (0., 10., 3.,  3.,  0., 10.,  0.00012),
+            (7.,  7.,  0., 10., 0., 10.,  0.000345),
+        ])
+
+    def _assertConsistent(self, g):
+        """Helper arrays must match what the coordinates say"""
+        d = g._fx.coords
+        for i in range(len(g._fx)):
+            a = int(g._fx.perp_axes[i])
+            self.assertGreaterEqual(a, 0)
+            self.assertEqual(d[i,2*a], d[i,2*a+1])
+            self.assertEqual(g._fx.perp_vals[i], d[i,2*a])
+        self.assertEqual(sum(g.getFxCounts()), g.getFxCount())
+
+    def test_translate(self):
+        g = self._grid()
+        g.translate((1.5, 0., -2.))
+        self._assertConsistent(g)
+        self.assertEqual(g._fx[2].d[0], Decimal('8.500'))
+        self.assertEqual(g._fx[0].determinePerpAxisVal(), (2, Decimal('3.000')))
+
+    def test_scale(self):
+        g = self._grid()
+        g.scale((2., 1., 0.5))
+        self._assertConsistent(g)
+        self.assertEqual(g._fx[2].d[0], Decimal('14.000'))
+        self.assertEqual(g._fx[0].determinePerpAxisVal(), (2, Decimal('2.500')))
+
+    def test_setDomainSize(self):
+        g = self._grid()
+        g.setDomainSize((0.,0.,0.), (6.,6.,6.))
+        self._assertConsistent(g)
+
+    def test_delFracture(self):
+        g = self._grid()
+        g.delFracture([1])
+        self._assertConsistent(g)
+        self.assertEqual(g.getFxCounts(), (1,0,1))
+
+    def test_merge(self):
+        g = self._grid()
+        h = g.merge(self._grid())
+        self._assertConsistent(h)
+        self.assertEqual(h.getFxCount(), 6)
+        self.assertEqual(h.getFxCounts(), (2,2,2))
+
+    def test_nudge_drops_keep_counts_correct(self):
+        """Fractures lost to nudging must leave the orientation counts right"""
+        g = OFracGrid(domainOrigin=(0.,0.,0.), domainSize=(10.,10.,10.), fx=[
+            (0., 10., 0., 10., 5., 5., 0.0001),
+            (0., 0.4, 3., 3., 0., 0.4, 0.00012),   # collapses when nudged
+        ])
+        g.collapse_policy = 'omit'
+        g.nudgeAll(1.0)
+        self.assertEqual(g.getFxCount(), 1)
+        self._assertConsistent(g)
+        self.assertEqual(g.getFxCounts(), (0,0,1))
+
+
+class TestPickling(unittest.TestCase):
+
+    def _grid(self):
+        return OFracGrid(domainOrigin=(0.,0.,0.), domainSize=(10.,10.,10.), fx=[
+            (0., 10., 0., 10., 5.,  5.,  0.0001),
+            (0., 10., 3.,  3.,  0., 10.,  0.00012),
+        ])
+
+    def test_roundtrip(self):
+        g = self._grid()
+        g.metadata['k'] = 'v'
+        h = pickle.loads(pickle.dumps(g, pickle.HIGHEST_PROTOCOL))
+
+        self.assertIsInstance(h._fx, OFracArray)
+        self.assertEqual(str(h), str(g))
+        self.assertEqual(h.metadata, {'k':'v'})
+        np.testing.assert_array_equal(h._fx.coords, g._fx.coords)
+        # fractures point back at the restored grid, not the original
+        self.assertIs(h._fx[0].myNet, h)
+
+    def test_spare_capacity_is_not_pickled(self):
+        g = self._grid()
+        g._fx.reserve(1000)
+        h = pickle.loads(pickle.dumps(g, pickle.HIGHEST_PROTOCOL))
+        self.assertEqual(len(h._fx), 2)
+        self.assertEqual(h._fx._d.shape, (2,6))
+
+    def test_legacy_list_of_ofrac_is_converted(self):
+        """Networks pickled before fractures were array-backed still load"""
+
+        class _LegacyOFrac:
+            """Stands in for the OFrac that carried its own Decimals"""
+            def __init__(self, d, ap):
+                self.d = d
+                self.ap = ap
+
+        legacy = [
+            _LegacyOFrac(tuple(map(Decimal, ('0','10','0','10','5','5'))),
+                Decimal('0.0001')),
+            _LegacyOFrac(tuple(map(Decimal, ('0','10','3','3','0','10'))),
+                Decimal('0.00012')),
+        ]
+
+        g = self._grid()
+        state = dict(g.__dict__)
+        state['_fx'] = legacy
+
+        h = OFracGrid.__new__(OFracGrid)
+        h.__setstate__(state)
+
+        self.assertIsInstance(h._fx, OFracArray)
+        self.assertEqual(len(h._fx), 2)
+        self.assertEqual(h._fx[0].d[1], Decimal('10.000'))
+        self.assertEqual(h._fx[1].ap, Decimal('0.000120'))
+        self.assertArrayEqual(h._fx.perp_axes, [2,1])
+        self.assertIs(h._fx[0].myNet, h)
+
+    def test_legacy_ofrac_setstate(self):
+        """An OFrac unpickled from the old slot layout gets its own store"""
+        f = OFrac.__new__(OFrac)
+        f.__setstate__((None, {
+            'd': tuple(map(Decimal, ('0','10','0','10','5','5'))),
+            'ap': Decimal('0.0001'),
+            'myNet': None,
+        }))
+        self.assertEqual(f.d[1], Decimal('10.000'))
+        self.assertEqual(f.ap, Decimal('0.000100'))
+        self.assertEqual(f.determinePerpAxisVal(), (2, Decimal('5.000')))
+        self.assertIsNone(f.myNet)
+
+    def assertArrayEqual(self, a, b):
+        np.testing.assert_array_equal(a, b)
+
+
+# shared by the classes above that did not define their own
+TestOFracArray.assertArrayEqual = TestOFracGrid.assertArrayEqual
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -187,6 +187,92 @@ def D_AP(v):
     """Return a decimal with the required number of digits for apertures"""
     return D(v,N_APERT_DIG)
 
+
+N_COORD_EXP = 3
+"""Number of decimal digits in `N_COORD_DIG`; `N_COORD_DIG == 10**-N_COORD_EXP`"""
+
+N_APERT_EXP = 6
+"""Number of decimal digits in `N_APERT_DIG`; `N_APERT_DIG == 10**-N_APERT_EXP`"""
+
+CO_SCALE = 10**N_COORD_EXP
+"""Number of integer storage units per unit of coordinate length"""
+
+AP_SCALE = 10**N_APERT_EXP
+"""Number of integer storage units per unit of aperture"""
+
+STORE_DTYPE = np.int32
+"""`numpy` dtype of the integer-quantized fracture coordinate and aperture stores
+
+Fractures are stored as integer counts of `N_COORD_DIG` (and `N_APERT_DIG`)
+rather than as `Decimal` or floating point values. Integers preserve the exact
+equality and exact arithmetic that the rest of this module depends upon --- a
+fracture's orientation is found by testing two of its coordinates for equality,
+and grid lines are matched to fracture faces through `set` membership --- while
+allowing the whole network to be queried with vectorized `numpy` operations.
+
+At 32 bits this spans +/-2,147,483.647 m of coordinate, which is far more than
+the physical domains involved. Values arriving from outside raise
+`OverflowError` when they exceed it; `OFracGrid.scale` and `OFracGrid.translate`
+check their results explicitly, because `numpy` would otherwise wrap silently.
+"""
+
+_WIDE_CTX = decimal.Context(prec=40)
+"""A context wide enough that re-scaling a quantized `Decimal` cannot round it
+
+The module-wide precision (12) is enough to *hold* a coordinate, but shifting
+that coordinate's decimal point to make an integer needs a few more digits.
+"""
+
+def _co2i(v):
+    """Return coordinate `v` as an exact integer count of `N_COORD_DIG` units"""
+    return int(D_CO(v).scaleb(N_COORD_EXP, _WIDE_CTX))
+
+def _i2co(i):
+    """Return a coordinate `Decimal` from an integer count of `N_COORD_DIG` units"""
+    # scaling an integer by 10**-N_COORD_EXP lands on the coordinate precision
+    # exactly, so no further quantization is needed
+    return Decimal(int(i)).scaleb(-N_COORD_EXP, _WIDE_CTX)
+
+_CO_INT_LIMIT = Decimal(np.iinfo(STORE_DTYPE).max) / CO_SCALE
+"""Largest coordinate magnitude the integer store can hold"""
+
+def _chk_co_range(a, operation):
+    """Raise if any value in `a` has left the range `STORE_DTYPE` can hold
+
+    `numpy` integer arithmetic wraps around silently, so operations that move
+    fractures check their results here rather than store a corrupt coordinate.
+    """
+    ii = np.iinfo(STORE_DTYPE)
+    if a.size and (a.min() < ii.min or a.max() > ii.max):
+        raise ValueError(
+            f'{operation} put a fracture outside the '
+            f'+/-{ii.max/CO_SCALE:,.3f} coordinate range that '
+            f'{np.dtype(STORE_DTYPE).name} fracture storage allows')
+
+def _bound2i(v, default):
+    """Return bounding-box coordinate `v` in integer units, or `default`
+
+    Bounding boxes may be given as infinities, or as the enormous floats used
+    to mean "do not truncate in this direction"; neither is representable in
+    the store, and `default` (a saturating integer bound) stands in for them.
+    """
+    try:
+        if abs(Decimal(v)) > _CO_INT_LIMIT:
+            return default
+    except (TypeError, ValueError, OverflowError, decimal.InvalidOperation):
+        return default
+
+    return _co2i(v)
+
+def _ap2i(v):
+    """Return aperture `v` as an exact integer count of `N_APERT_DIG` units"""
+    return int(D_AP(v).scaleb(N_APERT_EXP, _WIDE_CTX))
+
+def _i2ap(i):
+    """Return an aperture `Decimal` from an integer count of `N_APERT_DIG` units"""
+    return Decimal(int(i)).scaleb(-N_APERT_EXP, _WIDE_CTX)
+
+
 def nudge(v,increment):
     """Nudge v to the nearest multiple of increment."""
     return ((v/increment).quantize(0) * increment).quantize(N_COORD_DIG)
@@ -261,40 +347,336 @@ __FX_COLLAPSE_POLICY__ = __FX_COLLAPSE_POLICIES__[0]
 
 
 
+class OFracArray():
+    """Array-backed store of orthogonal fractures.
+
+    This replaces the `list` of `OFrac` objects that an `OFracGrid` used to
+    hold. Coordinates and apertures live in `numpy` integer arrays --- see
+    `STORE_DTYPE` for why integers --- alongside a helper array caching each
+    fracture's orientation, which the coordinates alone do not state directly.
+
+    The store deliberately behaves like the `list` it replaces: it has a
+    length, it is iterable, `store[i]` returns an `OFrac`, and `append`,
+    `del store[i]` and `del store[i:]` all work. Unlike a `list`, the `OFrac`
+    returned by indexing is a *view* onto a row of the arrays: mutating it
+    mutates the store, and it is invalidated by any later insertion or deletion.
+
+    Attributes
+    ----------
+    net : `OFracGrid` or `None`
+        The network owning these fractures, reported as `OFrac.myNet`.
+    """
+
+    __slots__ = ('_d', '_ap', '_perp', '_n', 'net',)
+
+    _MIN_CAPACITY = 8
+    """Smallest number of rows allocated once a store becomes non-empty"""
+
+    def __init__(self, net=None, capacity=0):
+        self._d = np.zeros((max(capacity,0), 6), dtype=STORE_DTYPE)
+        """Coordinates, in `N_COORD_DIG` units: xfrom, xto, yfrom ... zto"""
+
+        self._ap = np.zeros(max(capacity,0), dtype=STORE_DTYPE)
+        """Apertures, in `N_APERT_DIG` units"""
+
+        self._perp = np.full(max(capacity,0), -1, dtype=np.int8)
+        """Helper: index of the axis perpendicular to each fracture, or -1"""
+
+        self._n = 0
+        """Number of fractures stored; rows at and beyond this are unused"""
+
+        self.net = net
+
+    # live (as opposed to allocated) views of the stored data
+    @property
+    def coords(self):
+        """An (N,6) `numpy.array` of coordinates, in `N_COORD_DIG` units.
+
+        This is a view: writing to it writes to the store, and it is
+        invalidated by any operation that changes the store's length.
+        """
+        return self._d[:self._n]
+
+    @property
+    def apertures(self):
+        """An (N,) `numpy.array` of apertures, in `N_APERT_DIG` units (a view)"""
+        return self._ap[:self._n]
+
+    @property
+    def perp_axes(self):
+        """An (N,) `numpy.array` of perpendicular axis indices (a view)"""
+        return self._perp[:self._n]
+
+    @property
+    def perp_vals(self):
+        """An (N,) `numpy.array` of fracture plane coordinates, derived
+
+        The coordinate of a fracture's plane is just whichever of its 'from'
+        coordinates lies on the perpendicular axis, so it is computed here
+        rather than stored. Unlike the other array properties this is a fresh
+        array, not a view.
+        """
+        n = self._n
+        if n == 0:
+            return np.zeros(0, dtype=STORE_DTYPE)
+
+        return np.take_along_axis(self._d[:n, 0::2],
+            np.maximum(self._perp[:n], 0).astype(np.intp)[:, np.newaxis],
+            axis=1).squeeze(axis=1)
+
+    # list-like interface
+    def __len__(self):
+        return self._n
+
+    def __iter__(self):
+        for i in range(self._n):
+            yield self._view(i)
+
+    def __getitem__(self, key):
+        if isinstance(key, slice):
+            return [ self._view(i) for i in range(*key.indices(self._n)) ]
+        return self._view(self._chkindex(key))
+
+    def __setitem__(self, i, f):
+        """Overwrite fracture `i` with a copy of the `OFrac` `f`"""
+        i = self._chkindex(i)
+        (o, j) = (f._store, f._i)
+        self._d[i] = o._d[j]
+        self._ap[i] = o._ap[j]
+        self._perp[i] = o._perp[j]
+
+    def __delitem__(self, key):
+        if isinstance(key, slice):
+            self.delete(range(*key.indices(self._n)))
+        else:
+            self.delete((key,))
+
+    def append(self, f):
+        """Append a copy of the `OFrac` `f`; return the index it was given"""
+        return self._append_row(f._store._d[f._i], f._store._ap[f._i])
+
+    def append_values(self, *vals):
+        """Append one fracture from xfrom, xto, yfrom ... zto, ap
+
+        Returns the index it was given. Raises `FractureDefinitionError` if the
+        values do not describe a plane. This skips the temporary single-row
+        store that building an `OFrac` first would need.
+        """
+        return self._append_row(*OFrac.__check_vals__(*vals))
+
+    def reserve(self, n):
+        """Pre-allocate room for `n` fractures in total"""
+        self._reserve(n)
+
+    def extend(self, other):
+        """Append copies of every fracture in the `OFracArray` `other`"""
+        m = len(other)
+        if m == 0:
+            return
+
+        n = self._n
+        self._reserve(n+m)
+        self._d[n:n+m] = other.coords
+        self._ap[n:n+m] = other.apertures
+        self._perp[n:n+m] = other.perp_axes
+        self._n = n+m
+
+    def truncate_all(self, s, e):
+        """Fit every fracture into the bounding box `s`->`e`
+
+        The vectorized equivalent of calling `OFrac.truncate` on each fracture
+        in turn. If any fracture falls outside the box, or would be clipped out
+        of existence, that fracture is put back through `OFrac.truncate` so the
+        `FractureCollapseWarning` is raised exactly as it otherwise would be.
+
+        Parameters
+        ----------
+        s : array-like
+            The minimum coordinate of the bounding box (numeric-type triple)
+        e : array-like
+            The maximum coordinate of the bounding box (numeric-type triple)
+        """
+
+        n = self._n
+        if n == 0:
+            return
+
+        d = self._d[:n]
+        ii = np.iinfo(STORE_DTYPE)
+        lo = np.fromiter((_bound2i(v, ii.min) for v in s),
+                dtype=STORE_DTYPE, count=3)
+        hi = np.fromiter((_bound2i(v, ii.max) for v in e),
+                dtype=STORE_DTYPE, count=3)
+
+        # find every fracture the box cannot accommodate, in one pass, so that
+        # the one reported is the same one the per-fracture path would reach
+        bad = np.zeros(n, dtype=bool)
+        for a in range(3):
+            (v1, v2) = (d[:, 2*a], d[:, 2*a+1])
+            plane = (v1 == v2)
+
+            # a fracture whose plane lies outside the box is gone entirely
+            bad |= plane & ((v1 < lo[a]) | (v1 > hi[a]))
+            # ...as is one clipped down to nothing
+            bad |= ~plane & (
+                np.maximum(v1, lo[a]) >= np.minimum(v2, hi[a]))
+
+        if bad.any():
+            # re-run the offending fracture to raise with the usual message
+            self._view(int(np.argmax(bad))).truncate(s, e)
+
+        np.maximum(d[:, 0::2], lo, out=d[:, 0::2])
+        np.minimum(d[:, 1::2], hi, out=d[:, 1::2])
+
+        self._refresh_all()
+
+    def delete(self, indices):
+        """Remove the fractures at `indices`, an iterable of `int`
+
+        Repeated indices are removed once. Indices may be given in any order.
+        """
+
+        doomed = set(self._chkindex(i) for i in indices)
+        if not doomed:
+            return
+
+        keep = np.ones(self._n, dtype=bool)
+        keep[list(doomed)] = False
+        n = int(np.count_nonzero(keep))
+
+        # note the right hand sides are fancy-indexed copies, so these
+        # assignments back into the same arrays do not alias
+        self._d[:n] = self._d[:self._n][keep]
+        self._ap[:n] = self._ap[:self._n][keep]
+        self._perp[:n] = self._perp[:self._n][keep]
+        self._n = n
+
+    # internals
+    def _chkindex(self, i):
+        """Return `i` as a non-negative, in-range row index"""
+        i = int(i)
+        if i < 0:
+            i += self._n
+        if not 0 <= i < self._n:
+            raise IndexError(f'No fracture {i} among {self._n} fractures')
+        return i
+
+    def _view(self, i):
+        """Return an `OFrac` view of row `i` (no bounds checking)"""
+        f = OFrac.__new__(OFrac)
+        f._store = self
+        f._i = i
+        return f
+
+    def _reserve(self, n):
+        """Grow the allocation, if needed, to hold at least `n` fractures"""
+        cap = self._ap.size
+        if n <= cap:
+            return
+
+        newcap = max(n, 2*cap, self._MIN_CAPACITY)
+        live = self._n
+
+        def _grown(a, fill=0):
+            b = np.full((newcap,)+a.shape[1:], fill, dtype=a.dtype)
+            b[:live] = a[:live]
+            return b
+
+        self._d = _grown(self._d)
+        self._ap = _grown(self._ap)
+        self._perp = _grown(self._perp, fill=-1)
+
+    def _append_row(self, d, ap):
+        """Append raw integer coordinates and aperture; return the new index"""
+        i = self._n
+        self._reserve(i+1)
+        self._n = i+1
+        self._d[i] = d
+        self._ap[i] = ap
+        self._refresh(i)
+        return i
+
+    def _refresh(self, i):
+        """Recompute the orientation helpers for fracture `i`"""
+        row = self._d[i]
+        for a in range(3):
+            if row[2*a] == row[2*a+1]:
+                self._perp[i] = a
+                return
+        self._perp[i] = -1
+
+    def _refresh_all(self):
+        """Recompute the orientation helpers for every fracture"""
+        n = self._n
+        if n == 0:
+            return
+
+        d = self._d[:n]
+        # a fracture's plane is perpendicular to the first axis whose 'from'
+        # and 'to' coordinates are equal
+        eq = d[:, 0::2] == d[:, 1::2]
+        self._perp[:n] = np.where(eq.any(axis=1), eq.argmax(axis=1), -1)
+
+    # pickling; store only the rows in use, not the spare capacity
+    def __getstate__(self):
+        n = self._n
+        return {
+            '_d': self._d[:n].copy(),
+            '_ap': self._ap[:n].copy(),
+            '_perp': self._perp[:n].copy(),
+            '_n': n,
+            'net': self.net,
+        }
+
+    def __setstate__(self, state):
+        for key, val in state.items():
+            setattr(self, key, val)
+
+    def __repr__(self):
+        return f'<{type(self).__name__} of {self._n} fractures at {id(self):#x}>'
+
+
 # class for OFrac objects
 class OFrac():
-    """An orthogonal fracture object"""
+    """An orthogonal fracture object
 
-    __slots__ = ('d', 'ap', 'myNet',)
+    An `OFrac` is a lightweight *view* onto one row of an `OFracArray`: it
+    stores only that array and a row index, and its `d` and `ap` attributes
+    read and write the array on demand. A fracture built directly, rather than
+    obtained from an `OFracGrid`, gets its own single-row store; adding it to a
+    grid copies its row into the grid's store.
+    """
+
+    __slots__ = ('_store', '_i',)
 
     def __init__(self, *vals, **kwargs):
 
-        self.d = 6*[0.,]
-        """Position data:, xfrom, xto, yfrom ... zto."""
+        net = kwargs.get('myNet', None)
 
         if vals:
             # assume initializing from xfrom, xto, yfrom, yto, zfrom, zto, ap
-            self.__init_from_vals__( *vals )
+            (d, ap) = OFrac.__check_vals__( *vals )
         else:
             # assume initializing from another OFrac object
             other = kwargs['fromOFrac']
-            self.d = other.d
-            self.ap = other.ap
-            self.myNet = other.myNet
+            d = other._store._d[other._i].copy()
+            ap = other._store._ap[other._i]
+            if 'myNet' not in kwargs:
+                net = other.myNet
 
-        if 'myNet' in kwargs:
-            self.myNet = kwargs['myNet']
+        self._store = OFracArray(net, capacity=1)
+        self._i = self._store._append_row(d, ap)
 
-    def __init_from_vals__(self, xfrom, xto, yfrom, yto, zfrom, zto, ap):
-        """Initialize axis-aligned fracture object.
+    @staticmethod
+    def __check_vals__(xfrom, xto, yfrom, yto, zfrom, zto, ap):
+        """Check axis-aligned fracture values.
 
-        set coordinates
-        set aperture
-        optionally set the
+        Returns the quantized integer coordinates and aperture, ready to be
+        stored. Raises `FractureDefinitionError` if the values are not a plane.
         """
-        self.d = tuple(D_CO(v) for v in (xfrom, xto, yfrom, yto, zfrom, zto,) )
-        self.ap = D_AP(ap)
-        self.myNet = None
+
+        d = tuple(_co2i(v) for v in (xfrom, xto, yfrom, yto, zfrom, zto,))
+        ap = _ap2i(ap)
 
         # calculate the size of the fracture in each dimension
         # make sure there are are two good-length sides
@@ -305,23 +687,61 @@ class OFrac():
         countBad = int(xto < xfrom) + int(yto < yfrom) + int(zto < zfrom)
 
         if countSameOrBad > 1 or countBad > 0:
-            raise FractureDefinitionError( 'not a plane: '+str(self) )
+            raise FractureDefinitionError(
+                'not a plane: '+OFrac._strvals(map(_i2co, d), _i2ap(ap)) )
 
+        return (d, ap)
 
-    def _checkCollapse(self, operation, newd):
+    @property
+    def d(self):
+        """Position data:, xfrom, xto, yfrom ... zto.
+
+        A 6-tuple of coordinate-precision `Decimal`. Assigning a 6-length
+        sequence of numbers writes the (quantized) values back to the store.
+        """
+        return tuple(map(_i2co, self._store._d[self._i]))
+
+    @d.setter
+    def d(self, vals):
+        vals = tuple(vals)
+        if len(vals) != 6:
+            raise ValueError(f'Need 6 coordinates, but got {len(vals)}')
+
+        self._store._d[self._i] = tuple(map(_co2i, vals))
+        self._store._refresh(self._i)
+
+    @property
+    def ap(self):
+        """The fracture's aperture, as an aperture-precision `Decimal`"""
+        return _i2ap(self._store._ap[self._i])
+
+    @ap.setter
+    def ap(self, v):
+        self._store._ap[self._i] = _ap2i(v)
+
+    @property
+    def myNet(self):
+        """The `OFracGrid` containing this fracture, or `None`"""
+        return self._store.net
+
+    @myNet.setter
+    def myNet(self, net):
+        if net is not self._store.net and len(self._store) > 1:
+            raise ValueError(
+                'Cannot re-assign the network of a fracture held in a grid')
+        self._store.net = net
+
+    def _checkCollapse(self, operation, newd, d=None):
         # check for fracture "collapse" due to rounding
+        # ('d' is this fracture's current coordinates; callers that already
+        # hold them pass them in rather than pay to rebuild them)
+        if d is None:
+            d = self.d
         for a in range(3):
-            if self.d[2*a] != self.d[2*a+1] and newd[2*a] >= newd[2*a+1] :
+            if d[2*a] != d[2*a+1] and newd[2*a] >= newd[2*a+1] :
                 errmsg = 'Fracture collapsed during {}!:\n'.format(operation)
-                errmsg +='before - {}\n'.format(self)
-
-                # change coordinates of this object, rather than create a new
-                # temporary one (that will fail because coords bad)
-                dsave = self.d
-                self.d = newd
-                errmsg +='after  - {}'.format(self)
-                # return self to previous state
-                self.d = dsave
+                errmsg +='before - {}\n'.format(OFrac._strvals(d, self.ap))
+                errmsg +='after  - {}'.format(OFrac._strvals(newd, self.ap))
                 raise FractureCollapseWarning( errmsg )
 
     @staticmethod
@@ -335,11 +755,8 @@ class OFrac():
         'xyz'
          012
         """
-        o=-1
-        if   f.d[0]==f.d[1]:    o = 0
-        elif f.d[2]==f.d[3]:    o = 1
-        elif f.d[4]==f.d[5]:    o = 2
-        else:
+        o = int(f._store._perp[f._i])
+        if o < 0:
             raise RuntimeError(
                 'Could not determine orientation of {}'.format(f))
         return o
@@ -347,11 +764,16 @@ class OFrac():
     def determinePerpAxisVal(self):
         """Return the axis perpendicular to this fracture's plane, and its value"""
         o = OFrac.determineFracOrientation(self)
-        return ( o, self.d[(o)*2], )
+        return ( o, _i2co(self._store._d[self._i, 2*o]), )
+
+    @staticmethod
+    def _strvals(d, ap, wid=8):
+        """Return the standard string for the given coordinates and aperture"""
+        return '({:{w}}->{:{w}}, {:{w}}->{:{w}}, {:{w}}->{:{w}}), ap='.format(
+                *d, w=wid)+str(ap)
 
     def __str__(self,wid=8):
-        return '({:{w}}->{:{w}}, {:{w}}->{:{w}}, {:{w}}->{:{w}}), ap='.format(
-                *self.d, w=wid)+str(self.ap)
+        return OFrac._strvals(self.d, self.ap, wid=wid)
 
     def __getitem__(self, i):
         if i < 6: return self.d[i]
@@ -387,14 +809,15 @@ class OFrac():
         def myNudger(v):
             return nudge(v,nudgeIncrement)
 
-        newd = tuple(map(myNudger, self.d[:6]))
+        d = self.d
+        newd = tuple(map(myNudger, d))
 
         _policy = __FX_COLLAPSE_POLICY__
-        if hasattr(self, 'myNet'):
+        if self.myNet is not None:
             _policy=self.myNet.collapse_policy
 
         try:
-            self._checkCollapse("nudging", newd)
+            self._checkCollapse("nudging", newd, d)
 
         except FractureCollapseWarning as e:
             if _policy == 'fail':
@@ -448,8 +871,9 @@ class OFrac():
 
         domTruncStr = OFrac._Truncate_Op_Message(s,e)
 
+        d = self.d
         newd = []
-        for a,((v1,v2),mi,ma) in enumerate(zip(iterpairs(self.d), s, e)) :
+        for a,((v1,v2),mi,ma) in enumerate(zip(iterpairs(d), s, e)) :
             if v1 == v2 and ( v1 < mi or v1 > ma ):
                 # fracture's plane falls outside domain!
                 raise FractureCollapseWarning(
@@ -462,9 +886,17 @@ class OFrac():
             newd.append( max(v1,mi) )
             newd.append( min(v2,ma) )
 
-        self._checkCollapse( domTruncStr, newd )
+        newd = tuple( newd )
 
-        self.d = tuple( newd )
+        # A fracture wholly inside the bounding box is the common case; leave
+        # the store untouched rather than convert the same coordinates back in.
+        # (It cannot have collapsed: its coordinates have not changed.)
+        if newd == d:
+            return self
+
+        self._checkCollapse( domTruncStr, newd, d )
+
+        self.d = newd
         return self
 
     def calcElems(self):
@@ -508,6 +940,9 @@ class OFrac():
         else:
             raise RuntimeError('Unexpected (wrong?) value for perpenicular direction')
 
+    def __getstate__(self):
+        return { '_store':self._store, '_i':self._i, }
+
     def __setstate__(self, state):
         """
         __setstate__ is called when unpickling to set the object's state.
@@ -521,8 +956,18 @@ class OFrac():
         else:
             raise ValueError('Bad state: type={type(state)}, value={state!s}')
 
-        for key, val in state.items():
-            setattr(self, key, val)
+        if '_store' in state:
+            self._store = state['_store']
+            self._i = state['_i']
+            return
+
+        # A fracture pickled before fractures were array-backed: it carried its
+        # own 'd' and 'ap' Decimals. Give it a private store to live in.
+        self._store = OFracArray(state.get('myNet', None), capacity=1)
+        self._i = self._store._append_row(
+            np.fromiter((_co2i(v) for v in state['d']),
+                dtype=STORE_DTYPE, count=6),
+            _ap2i(state['ap']))
 
 class OFracGrid():
     """Container/Utility class for an orthogonal fracture network."""
@@ -543,7 +988,7 @@ class OFracGrid():
 
         """
 
-        self._fx = []
+        self._fx = OFracArray(self)
         self._fixedgl = [ set(), set(), set() ]
         self.collapse_policy = 'warn-omit'
 
@@ -578,14 +1023,15 @@ class OFracGrid():
 
         messages = []
 
-        # add fractures
+        # add fractures, straight into the store
+        try:
+            self._fx.reserve(len(fx))
+        except TypeError:
+            pass # fx has no len(); let the store grow as it goes
+
         for i,f in enumerate(fx):
             try:
-                cf = OFrac( *f, myNet=self )
-                if cf.truncate(s,e) is not None:
-                    self._fx.append(cf)
-                else:
-                    messages.append(f'Fracture {i} is out of the domain.')
+                self._fx.append_values( *f )
             except FractureDefinitionError as err:
                 if __BAD_FRACTURE_POLICY__ == 'warn':
                     messages.append(f'Fracture {i} in inputs is bad: {err!s}')
@@ -593,6 +1039,8 @@ class OFracGrid():
                     pass
                 else:
                     raise RuntimeError( f'ABORT: Fracture {i} bad: {err!s}' )
+
+        self._fx.truncate_all(s,e)
 
         self._reCountFractures()
 
@@ -721,9 +1169,13 @@ class OFracGrid():
                 self._mima[a][0] = min(self._mima[a][0], gla[ 0])
                 self._mima[a][1] = max(self._mima[a][1], gla[-1])
 
-        if 'useFx' in kwargs and kwargs['useFx']:
-            for fx in self._fx:
-                self._remakeMinMax_includeFx(fx)
+        if 'useFx' in kwargs and kwargs['useFx'] and len(self._fx) > 0:
+            d = self._fx.coords
+            for i in range(3):
+                self._mima[i][0] = min(
+                    self._mima[i][0], _i2co(d[:, 2*i  ].min()))
+                self._mima[i][1] = max(
+                    self._mima[i][1], _i2co(d[:, 2*i+1].max()))
 
 
     def _remakeGridLineLists(self, keep_glAsSets=False):
@@ -736,18 +1188,16 @@ class OFracGrid():
         self._resetMinMax()
         self._remakeMinMax( useFixedGrid=True )
 
-        for fx in self._fx:
-            # add gridlines
-            self._gl[0].update( fx.d[0:2] )
-            self._gl[1].update( fx.d[2:4] )
-            self._gl[2].update( fx.d[4:6] )
+        if len(self._fx) > 0:
+            d = self._fx.coords
+
+            # add gridlines; np.unique collapses the (many) repeated fracture
+            # face coordinates before any Decimal is built
+            for a in range(3):
+                self._gl[a].update(map(_i2co, np.unique(d[:, 2*a:2*a+2])))
 
             # determine fx net min/max coordinate
-            # (instead of doing it below)
-            for i in range(3):
-                self._mima[i][0] = min(self._mima[i][0], fx.d[2*i  ])
-                self._mima[i][1] = max(self._mima[i][1], fx.d[2*i+1])
-
+            self._remakeMinMax( useFx=True )
 
         if not keep_glAsSets:
             self._gl = list( sorted(x) for x in self._gl )
@@ -765,12 +1215,15 @@ class OFracGrid():
 
 
     def _reCountFractures(self):
-        # reset orientation counts
-        self._ocounts = 3 * [ 0, ]
-        # rescan fractures
-        for fx in self._fx:
-            o = OFrac.determineFracOrientation(fx)
-            self._ocounts[o] += 1
+        # rescan fractures, using the store's cached orientations
+        perp = self._fx.perp_axes
+
+        if np.any(perp < 0):
+            bad = int(np.argmax(perp < 0))
+            raise RuntimeError(
+                'Could not determine orientation of {}'.format(self._fx[bad]))
+
+        self._ocounts = [ int(c) for c in np.bincount(perp, minlength=3) ]
 
     # domain information
     def getBounds(self):
@@ -900,12 +1353,14 @@ class OFracGrid():
                 raise ValueError(f'Found scaling of zero in {"xyz"[ax]}')
 
         # move fractures
-        for f in self._fx:
-            newd = 6*[ None, ]
-            for i,sc in zip(count(start=0,step=2),s):
-                newd[i  ] = D_CO(f.d[i  ]*sc)
-                newd[i+1] = D_CO(f.d[i+1]*sc)
-            f.d = tuple(newd)
+        if len(self._fx) > 0:
+            d = self._fx.coords
+            for ax,sc in enumerate(s):
+                # np.rint rounds halves to even, matching Decimal's default
+                scaled = np.rint(d[:, 2*ax:2*ax+2] * float(sc))
+                _chk_co_range(scaled, 'Scaling')
+                d[:, 2*ax:2*ax+2] = scaled.astype(STORE_DTYPE)
+            self._fx._refresh_all()
 
         self.domainOrigin = toDTuple(map(prod,zip(self.domainOrigin,s)))
         self.domainSize = toDTuple(map(prod,zip(self.domainSize,s)))
@@ -939,12 +1394,15 @@ class OFracGrid():
         t = toDTuple(t)
 
         # move fractures
-        for f in self._fx:
-            newd = 6*[ None, ]
-            for i,tv in zip(count(start=0,step=2),t):
-                newd[i  ] = f.d[i  ]+tv
-                newd[i+1] = f.d[i+1]+tv
-            f.d = tuple(newd)
+        if len(self._fx) > 0:
+            d = self._fx.coords
+            for ax,tv in enumerate(t):
+                # exact in integer storage units, but widen before adding so
+                # that leaving the storage range is caught rather than wrapped
+                shifted = d[:, 2*ax:2*ax+2].astype(np.int64) + _co2i(tv)
+                _chk_co_range(shifted, 'Translation')
+                d[:, 2*ax:2*ax+2] = shifted
+            self._fx._refresh_all()
 
         newOrigin = list(self.domainOrigin) #mutable
 
@@ -989,6 +1447,9 @@ class OFracGrid():
 
             if cf.truncate(s,e) is not None:
                 self._fx.append(cf)
+                # keep orientation counts in sync (constructor recounts, but
+                # addFracture must maintain them incrementally)
+                self._ocounts[OFrac.determineFracOrientation(cf)] += 1
             else:
                 messages.append(f'Fracture {index} is out of the domain.')
         except FractureDefinitionError as err:
@@ -1008,16 +1469,41 @@ class OFracGrid():
                 OFracGrid.iterFracs
         """
 
-        for i in reversed(sorted(indexList)):
+        doomed = sorted(set(indexList))
+
+        for i in doomed:
             (o,v) = self._fx[i].determinePerpAxisVal()
             self._ocounts[o] -= 1
-            del self._fx[i]
+
+        self._fx.delete(doomed)
 
 
     def iterFracs(self):
         """iterate over fractures"""
-        for f in self._fx:
-            yield f
+        return iter(self._fx)
+
+    def getFxCoordinates(self):
+        """Return an (N,6) `numpy.array` of fracture coordinates, as `float`
+
+        Columns are xfrom, xto, yfrom, yto, zfrom, zto. The array is a fresh
+        copy; changing it does not change the network.
+        """
+        return self._fx.coords * (1.0/CO_SCALE)
+
+    def getFxApertures(self):
+        """Return an (N,) `numpy.array` of fracture apertures, as `float`
+
+        The array is a fresh copy; changing it does not change the network.
+        """
+        return self._fx.apertures * (1.0/AP_SCALE)
+
+    def getFxPerpAxes(self):
+        """Return an (N,) `numpy.array` of each fracture's perpendicular axis
+
+        Values are 0 for a yz-plane fracture, 1 for xz, and 2 for xy, matching
+        `OFrac.determineFracOrientation`. The array is a fresh copy.
+        """
+        return self._fx.perp_axes.astype(int)
 
     def nudgeAll( self, nudgeTo ):
         """Nudge existing gridlines and all fractures to specified increment.
@@ -1046,10 +1532,12 @@ class OFracGrid():
 
         failedNudges = []
         for i,of in enumerate(self._fx):
-            if not self._fx[i].nudge( nudgeTo ): failedNudges.append(i)
+            if not of.nudge( nudgeTo ): failedNudges.append(i)
 
-        for i in reversed(failedNudges):
-            del self._fx[i]
+        if failedNudges:
+            self._fx.delete(failedNudges)
+            # dropped fractures must not be left in the orientation counts
+            self._reCountFractures()
 
         # A side-effect of nudging fractures is that the grid becomes invalid.
         # Because we just nudged the grid lines, the grid is ok now only if it
@@ -1480,13 +1968,14 @@ class OFracGrid():
             if __VERBOSITY__ > 3:
                 print(f'merging {len(other._fx)} fractures')
 
-            for i,f in enumerate(other.iterFracs()):
-                if __VERBOSITY__ > 5:
-                    print(f'adding fracture #{i}: {f}')
-                elif __VERBOSITY__ > 4:
-                    print('.',end='')
+            if __VERBOSITY__ > 4:
+                for i,f in enumerate(other.iterFracs()):
+                    if __VERBOSITY__ > 5:
+                        print(f'adding fracture #{i}: {f}')
+                    else:
+                        print('.',end='')
 
-                newGrid._fx.append( OFrac(fromOFrac=f, myNet=newGrid) )
+            newGrid._fx.extend( other._fx )
 
             for i in range(3):
                 newGrid._ocounts[i] += other._ocounts[i]
@@ -1628,6 +2117,29 @@ class OFracGrid():
 
         raise NotImplementedError()
  
+    def __setstate__(self, state):
+        """Restore an unpickled network.
+
+        Networks pickled before fractures were array-backed hold `_fx` as a
+        `list` of `OFrac`; convert it to an `OFracArray`.
+        """
+
+        self.__dict__.update(state)
+
+        if not isinstance(state.get('_fx', None), OFracArray):
+            oldfx = state.get('_fx', None) or []
+            self._fx = OFracArray(self, capacity=len(oldfx))
+            for f in oldfx:
+                if isinstance(f, OFrac):
+                    self._fx.append(f)
+                else:
+                    # some other fracture object from an older version of this
+                    # module; take it at its 'd' and 'ap'
+                    self._fx._append_row(
+                        tuple(_co2i(v) for v in f.d), _ap2i(f.ap))
+
+        self._fx.net = self
+
     @staticmethod
     def pickleTo( ofracObj, f ):
         """Dump to the given filename/file"""
