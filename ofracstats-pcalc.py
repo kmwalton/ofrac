@@ -57,8 +57,6 @@ LICENCE: GNU GPLv3
 Documentation intended to work with pdoc3.
 
 TODO:
-- refactor and use "new" ofracs methods
-- reimplemnt superposition of FILES
 - reimplement --batch-dir and table output
 
 """
@@ -81,15 +79,15 @@ from typing import NamedTuple
 
 import json
 
+import numpy as np
+
 try:
     from ofrac.ofracs import parse as parse_dfn
-    from ofrac.ofracs import OFrac
     from ofrac.p_system import *
     from ofrac.p_system.constants import *
 except ModuleNotFoundError:
     # accommodate "old style" PYTHONPATHing to within this module
     from ofracs import parse as parse_dfn
-    from ofracs import OFrac
     from p_system import *
     from p_system.constants import *
 
@@ -143,17 +141,6 @@ def _get_json_context(args_json):
     # Standard file path
     return open(args_json, 'w')
 
-
-def ofrac2ftuple( ofx ):
-    """convert an OFrac object to this script's internal representation
-
-    used here:
-    ( (x0, x1, y0, y1, z0, z1, ap), orientationstring )
-
-    """
-    ofxo = OFrac.determineFracOrientation(ofx)
-
-    return ( tuple(map(float, ofx.d+(ofx.ap,))), OIND[ PERP[ 'xyz'[ofxo] ] ] )
 
 class NotValidInputFile(Exception):
     """Custom exception for no valid parser found"""
@@ -301,13 +288,6 @@ class SpatialZone:            # {{{
    def zR(self): return self.c[2]
    def r(self,d): return self.c[d]
 
-   def containsFracture(self, f):
-      """Returns true if part of the fracture lies in the zone."""
-      for i in range(3):
-         if f[0][2*i+1] < self.c[i][0] or self.c[i][1] < f[0][2*i]:
-            return False
-      return True
-
    def __str__(self):
       return "x:{} y:{} z:{}".format( self.c[0], self.c[1], self.c[2] )
 
@@ -319,19 +299,68 @@ class SpatialZone:            # {{{
 #
 
 class FractureZone:                                         #{{{
-   def __init__(self, zn, allFracs, nScan=10):
+   """The fractures of a network that intersect a zone, and its P-measures.
+
+   The fractures are kept as the `numpy` arrays that `ofrac.ofracs.OFracGrid`
+   exposes --- coordinates, apertures, perpendicular axes, per-axis extents,
+   areas and volumes --- rather than one object per fracture, so that every
+   measure below is a whole-array operation over the zone.
+   """
+
+   def __init__(self, zn, fxNet, nScan=10):
+      """Make a zone's fracture set from a network
+
+      Arguments:
+        zn(SpatialZone): the region to sample
+        fxNet(ofrac.ofracs.OFracGrid): the network to take fractures from
+        nScan(int): the number of scan lines/planes per measure
+      """
       self.zn = zn
-      self.fracs = list( filter( zn.containsFracture, allFracs ) )
       self.nScan = nScan
-      self.zn_vol = self.zn.vol()
+      self.zn_vol = zn.vol()
+
+      (start, end) = (zn.start(), zn.end())
+
+      # the fractures of this zone: those intersecting it, in their own network
+      znet = fxNet.subsetFx( fxNet.getFxMaskIn(start, end) )
+
+      self.d = znet.getFxCoordinates()
+      """(M,6) coordinates of this zone's fractures: xfrom, xto, yfrom ... zto"""
+
+      self.ap = znet.getFxApertures()
+      """(M,) apertures"""
+
+      self.perp = znet.getFxPerpAxes()
+      """(M,) index of the axis each fracture is perpendicular to"""
+
+      self.ext = znet.getFxLengths()
+      """(M,3) extent of each fracture along each axis; zero on its perp axis"""
+
+      self.area = znet.getFxAreas()
+      """(M,) area of each fracture"""
+
+      self.vol = znet.getFxVolumes()
+      """(M,) void volume (area times aperture) of each fracture"""
+
+      self.in_plane = np.arange(3) != self.perp[:, np.newaxis]
+      """(M,3) mask of the two axes lying in each fracture's plane"""
+
+      # lengths are measured within the zone only when the user asks for that
+      self.ext_zone = self.ext
+      if getattr(zn, 'truncateToZone', False):
+         self.ext_zone = znet.getFxLengths(clip_to=(start, end))
+
+   def __len__(self):
+      return len(self.ap)
 
    def __str__(self):
        return str(self.zn)
 
-   def iterFracs(self):
-      """iterate over fractures"""
-      for f in self.fracs:
-         yield f
+   def fracStr(self, i):
+      """Return the printable form of this zone's fracture `i`"""
+      d = self.d[i]
+      return '({:8.3f}->{:8.3f}, {:8.3f}->{:8.3f}, {:8.3f}->{:8.3f}), ap={:.6f}'\
+          .format(*d, self.ap[i])
 
    def setNScan( self, n ):
       """Set the number of scan lines/planes/whatever in the next PNN
@@ -347,15 +376,19 @@ class FractureZone:                                         #{{{
       if not nScanLine:
          nScanLine = self.nScan
 
-      # os, orientation string
-      # m, length of the scanline
-      d0 = DIR[dScanLine]           #indices
+      # d0, the direction of the scan line; d1 and d2, the axes it is placed on
+      d0 = DIR[dScanLine]
       d1 = DIR[PERP[dScanLine][0]]
       d2 = DIR[PERP[dScanLine][1]]
-      o = OIND[PERP[dScanLine]]
-      od1ind = 2*d1
-      od2ind = 2*d2
 
+      # only fractures perpendicular to the scan line can be crossed by it;
+      # take their in-plane extents once, then test whole scan lines at a time
+      onLine = self.perp == d0
+      (a1, b1) = ( self.d[onLine, 2*d1], self.d[onLine, 2*d1+1] )
+      (a2, b2) = ( self.d[onLine, 2*d2], self.d[onLine, 2*d2+1] )
+      iOnLine = np.flatnonzero(onLine)
+
+      # m, the length of one scan line
       m = self.zn.size(d0)
       (cc,cm) = (0,0.0)
 
@@ -364,11 +397,9 @@ class FractureZone:                                         #{{{
 
       for ci in range(nScanLine):
          (c1,c2) = ( uniform(*self.zn.r(d1)), uniform(*self.zn.r(d2)) )
-         count = sum( 1 for i in filter(
-            lambda fd: fd[1]==o \
-               and fd[0][od1ind] <= c1 and c1 < fd[0][od1ind+1] \
-               and fd[0][od2ind] <= c2 and c2 < fd[0][od2ind+1],\
-            self.fracs ))
+
+         hits = (a1 <= c1) & (c1 < b1) & (a2 <= c2) & (c2 < b2)
+         count = int(np.count_nonzero(hits))
 
          if __VERBOSITY__ > 1:
 
@@ -378,25 +409,17 @@ class FractureZone:                                         #{{{
                      c1, c2,
                  )
 
-            cMag = max( len("{:.3f}".format(s)) for s in chain(*self.zn.c) ) + 1
+            dens = float(count)/m if m > 0.0 else float('inf')
+            spac = 1.0/dens if count > 0 else float('inf')
 
-            dens = float(count)/m
-            spac = float('inf')
-
-            if count > 0:
-                spac = 1.0/dens
             print( "{}: {:6.3g}/m {:6.3g}m (count={})".format(
-                      s, dens, spac, count, w=cMag ) )
+                      s, dens, spac, count ) )
 
-            if __VERBOSITY__ > 2:
+            if __VERBOSITY__ > 2 and count > 0:
+                 w = 1+int(log10(count))
                  s = 'Fractures found:\n'
-                 w = int(log10(len(self.fracs)))
-                 for iff,ff in enumerate(filter(
-                     lambda fd: fd[1]==o \
-                       and fd[0][od1ind] <= c1 and c1 < fd[0][od1ind+1] \
-                       and fd[0][od2ind] <= c2 and c2 < fd[0][od2ind+1],\
-                     self.fracs), start=1):
-                        s += f'{iff:{w}}: {ff}\n'
+                 for iff,ifx in enumerate(iOnLine[hits], start=1):
+                        s += f'{iff:{w}}: {self.fracStr(ifx)}\n'
                  print(s)
 
          cc += count
@@ -410,57 +433,33 @@ class FractureZone:                                         #{{{
 
 
    def lengths(self):
-      lengths = ( [0.0,0], [0.0,0], [0.0,0] ) # tuple of ( sum{length}, count )
-      minlength = [ 1e100, 1e100, 1e100 ]
-      maxlength = [ 0.0, 0.0, 0.0 ]
+      """Return per-axis fracture length statistics for this zone
 
-      for f in self.fracs:
+      Lengths are of the part of each fracture inside the zone when the zone
+      was made with `truncateToZone`; a fracture that leaves nothing inside the
+      zone is left out.
+      """
 
-         # if the truncate flag is set, truncate as necessary.
-         if hasattr(self.zn,'truncateToZone') and self.zn.truncateToZone:
-            fobj = OFrac(*f[0])
-            try:
-                fobj.truncate(self.zn.start(), self.zn.end())
-            except (FractureCollapseError, FractureCollapseWarning) as e:
-                f = None
-            else:
-               f = ofrac2ftuple(fobj)
+      ext = self.ext_zone
 
-         if f is None:
-             continue
+      # a fracture clipped out of existence in the plane it lies in is not one
+      # of this zone's fractures any more
+      alive = ~np.any( self.in_plane & (ext <= 0.0), axis=1 )
 
-         o = INDO[f[1]]
-         d1 = DIR[o[0]]
-         d2 = DIR[o[1]]
-         d1l = f[0][2*d1+1] - f[0][2*d1]
-         d2l = f[0][2*d2+1] - f[0][2*d2]
-         lengths[d1][0] += d1l
-         lengths[d1][1] += 1
-         lengths[d2][0] += d2l
-         lengths[d2][1] += 1
-         minlength[d1] = min( minlength[d1], d1l )
-         maxlength[d1] = max( maxlength[d1], d1l )
-         minlength[d2] = min( minlength[d2], d2l )
-         maxlength[d2] = max( maxlength[d2], d2l )
+      stats = {}
+      for a,ax in enumerate('xyz'):
+         # the extent along an axis is a length only for the fractures lying in
+         # a plane containing that axis
+         l = ext[alive & self.in_plane[:, a], a]
 
-      return \
-         {'x':{'MIN':minlength[0], 'MAX':maxlength[0], 'SUM':lengths[0][0], 'COUNT':lengths[0][1]},
-          'y':{'MIN':minlength[1], 'MAX':maxlength[1], 'SUM':lengths[1][0], 'COUNT':lengths[1][1]},
-          'z':{'MIN':minlength[2], 'MAX':maxlength[2], 'SUM':lengths[2][0], 'COUNT':lengths[2][1]} }
+         stats[ax] = {
+            'MIN': float(l.min()) if l.size else 1e100,
+            'MAX': float(l.max()) if l.size else 0.0,
+            'SUM': float(l.sum()),
+            'COUNT': int(l.size),
+            }
 
-   @staticmethod
-   def fracArea(f):
-      os = INDO[f[1]] # orientation string, e.g. 'xy'
-      d1ind = 2*DIR[os[0]]
-      d2ind = 2*DIR[os[1]]
-      return ( f[0][d1ind+1] - f[0][d1ind] ) * ( f[0][d2ind+1] - f[0][d2ind] )
-
-   @staticmethod
-   def fracVol(f):
-      os = INDO[f[1]] # orientation string, e.g. 'xy'
-      d1ind = 2*DIR[os[0]]
-      d2ind = 2*DIR[os[1]]
-      return f[0][6] * ( f[0][d1ind+1] - f[0][d1ind] ) * ( f[0][d2ind+1] - f[0][d2ind] )
+      return stats
 
    def P20_P22(self, dperpScanPlane, nScanPlane):
 
@@ -469,36 +468,36 @@ class FractureZone:                                         #{{{
       fracArea = 0.0
       scanPlaneTotalArea = 0.0
 
-      oind = OIND[PERP[dperpScanPlane]]
       d = DIR[dperpScanPlane]
       d1 = DIR[PERP[dperpScanPlane][0]]
       d2 = DIR[PERP[dperpScanPlane][1]]
 
+      # only fractures not perpendicular to the scan plane's normal can cut it
+      cuts = self.perp != d
+      (lo, hi) = ( self.d[cuts, 2*d], self.d[cuts, 2*d+1] )
+      cExt = self.ext[cuts]
+
+      # the trace of such a fracture in the scan plane is a line of its in-plane
+      # extent, so this is the trace length times the aperture
+      cArea = self.ap[cuts] * np.maximum(cExt[:, d1], cExt[:, d2])
+
+      # count each fracture's trace ends that lie within the zone, once
+      cEnds = np.zeros(len(cArea), dtype=int)
+      for a in (d1, d2):
+         (aFrom, aTo) = ( self.d[cuts, 2*a], self.d[cuts, 2*a+1] )
+         isEnd = cExt[:, a] > 0.0
+         cEnds += isEnd & (aFrom >= self.zn.st(a))
+         cEnds += isEnd & (aTo <= self.zn.en(a))
+
       for plane in range(nScanPlane):
          positionOfPlane = uniform(*self.zn.r(d))
 
-         # prune our full list of fractures down to ones that intersect this
-         # plane
-         pFracs = list(filter(
-            lambda fd: fd[1]!=oind and fd[0][2*d] <= positionOfPlane < fd[0][2*d+1],
-            self.fracs ))
+         # prune to the fractures that intersect this plane
+         onPlane = (lo <= positionOfPlane) & (positionOfPlane < hi)
 
-         fracCount += len(pFracs)
-
-         # count the number of fracture trace ends in this sub-sample area
-         for f in pFracs:
-            if f[0][2*d1] != f[0][2*d1+1]:
-               fracEndCount += f[0][2*d1] >= self.zn.st(d1)
-               fracEndCount += f[0][2*d1+1] <= self.zn.en(d1)
-            if f[0][2*d2] != f[0][2*d2+1]:
-               fracEndCount += f[0][2*d2] >= self.zn.st(d2)
-               fracEndCount += f[0][2*d2+1] <= self.zn.en(d2)
-
-         fracArea += sum( list( map(
-            lambda fd:
-               fd[0][6] # aperture
-               * max(fd[0][2*d1+1] - fd[0][2*d1], fd[0][2*d2+1] - fd[0][2*d2]),
-            pFracs ) ) )
+         fracCount += int(np.count_nonzero(onPlane))
+         fracEndCount += int(cEnds[onPlane].sum())
+         fracArea += float(cArea[onPlane].sum())
 
          scanPlaneTotalArea += self.zn.size(d1) * self.zn.size(d2)
 
@@ -532,21 +531,21 @@ class FractureZone:                                         #{{{
         return P22Result(dperpScanPlane, size_1, size_2, fCount, spArea, float(fArea) / spArea)
 
    def P30(self):
-        f_count = len(self.fracs)
+        f_count = len(self)
         if self.zn_vol == 0:
             return P30Result(f_count, self.zn_vol, float('inf'))
         return P30Result(f_count, self.zn_vol, f_count / self.zn_vol)
 
    def P32(self):
         if not hasattr(self, '_fxA'):
-            self._fxA = sum(map(FractureZone.fracArea, self.fracs))
+            self._fxA = float(self.area.sum())
 
         if self.zn_vol < 1e-6:
             return P32Result(self.zn_vol, self._fxA, float('inf'))
         return P32Result(self.zn_vol, self._fxA, self._fxA / self.zn_vol)
 
    def P33(self):
-        fx_vol = sum(map(FractureZone.fracVol, self.fracs))
+        fx_vol = float(self.vol.sum())
         if self.zn_vol < 1e-6:
             return P33Result(self.zn_vol, fx_vol, float('inf'))
         return P33Result(self.zn_vol, fx_vol, fx_vol / self.zn_vol)
@@ -558,21 +557,6 @@ class FractureZone:                                         #{{{
 #
 #  Read command line, start doing stuff
 #
-
-
-def determineFracO(f):
-   o=-1
-   if   f[0]==f[1]:    o = 3
-   elif f[2]==f[3]:    o = 2
-   elif f[4]==f[5]:    o = 1
-   return o
-
-# gather data of fractures
-def fixOofLastFrac():
-   f = fracs[-1][0]
-   o = determineFracO(f)
-   fracs[-1] = ( f,o )
-   return o
 
 
 # for multiprocessing
@@ -590,7 +574,7 @@ def _run_calc_job(task_args):
 
 def doEverything(args, batchDir=''):
 
-    fracs = []
+    fxNets = []
     fracFileSubZones = []
 
     # collect data for JSON as its generated
@@ -606,16 +590,11 @@ def doEverything(args, batchDir=''):
        # populate
        nfile= fxNet.getFxCounts()
        mima = list( map(float, chain( *fxNet.getBounds() ) ) )
-       fracsHere = list( fxNet.iterFracs() )
-
 
        subZone = SpatialZone(start=( mima[0], mima[2], mima[4] ) ,
                         end=( mima[1], mima[3], mima[5] ) )
 
-       if fracsHere and type( fracsHere[0] ) == OFrac:
-          fracsHere = map( ofrac2ftuple, fracsHere )
-
-       fracs += fracsHere
+       fxNets.append( fxNet )
        fracFileSubZones.append( subZone )
 
        if __VERBOSITY__:
@@ -624,6 +603,9 @@ def doEverything(args, batchDir=''):
           for i,o in enumerate(INDO.values()):
              print( "Number in %s-plane: %d" % ( o, nfile[i] ) )
        del nfile
+
+    # superimpose the networks of all files
+    fxNet = fxNets[0] if len(fxNets) == 1 else fxNets[0].merge( *fxNets[1:] )
 
 
     #  Determine the size of the domain
@@ -657,6 +639,9 @@ def doEverything(args, batchDir=''):
        sampleZn = [ dom ]
 
 
+    # collect each zone's fractures once; the calculations below re-use them
+    fzns = [ FractureZone(zn, fxNet, args.n) for zn in sampleZn ]
+
     results = []
 
     _jobs = list(chain(
@@ -669,12 +654,9 @@ def doEverything(args, batchDir=''):
     ))
 
     if args.max_cpus == 1:
-        for (izn, zn) in enumerate(sampleZn):
+        for (izn, (zn, fzn)) in enumerate(zip(sampleZn, fzns)):
 
-            fzn = FractureZone(zn,fracs)
-            fzn.setNScan(args.n)
-
-            _d = { 'SubDomain':str(zn), 'nscan':args.n, 'nfracs':len(fzn.fracs), }
+            _d = { 'SubDomain':str(zn), 'nscan':args.n, 'nfracs':len(fzn), }
 
             _r = list(map(_run_calc_job, ((fzn, j) for j in _jobs)))
 
@@ -685,12 +667,9 @@ def doEverything(args, batchDir=''):
     else:
 
         with multiprocessing.Pool(args.max_cpus) as pool:
-            for (izn, zn) in enumerate(sampleZn):
+            for (izn, (zn, fzn)) in enumerate(zip(sampleZn, fzns)):
 
-                fzn = FractureZone(zn,fracs)
-                fzn.setNScan(args.n)
-
-                _d = { 'range':str(zn), 'nscan':args.n, 'nfracs':len(fzn.fracs), }
+                _d = { 'range':str(zn), 'nscan':args.n, 'nfracs':len(fzn), }
 
                 _r = pool.map(_run_calc_job, ((fzn, j) for j in _jobs))
                 results.append(_r)
@@ -738,7 +717,7 @@ Sample Zones:
     tecout += 'VARIABLES="X","Y","Z"\n'
     tecout += '\n'
 
-    for (izn, zn) in enumerate(sampleZn):
+    for (izn, (zn, fzn)) in enumerate(zip(sampleZn, fzns)):
 
         # r is a list of 2-tuples of the data and a formatter
         r = results[izn]

@@ -358,6 +358,187 @@ class TestVectorizedAccessors(unittest.TestCase):
         self.assertEqual(g._fx[0].d[0], Decimal('0.000'))
 
 
+class TestFxFiltering(unittest.TestCase):
+    """Masks and measures over whole fracture sets"""
+
+    def _grid(self):
+        # a 10m cube holding one fracture of each orientation
+        return OFracGrid(domainOrigin=(0.,0.,0.), domainSize=(10.,10.,10.), fx=[
+            (0., 10., 0., 10., 5.,  5.,  0.0001),   # xy, at z=5
+            (0.,  4., 3.,  3., 0., 10.,  0.00012),  # xz, at y=3
+            (7.,  7., 0., 10., 0.,  6.,  0.000345), # yz, at x=7
+        ])
+
+    def assertArrayEqual(self, a, b):
+        np.testing.assert_array_equal(a, b)
+
+    def test_mask_in(self):
+        g = self._grid()
+
+        with self.subTest('the whole domain keeps everything'):
+            self.assertArrayEqual(
+                g.getFxMaskIn((0.,0.,0.), (10.,10.,10.)), [True]*3)
+
+        with self.subTest('a corner of the domain'):
+            self.assertArrayEqual(
+                g.getFxMaskIn((0.,0.,0.), (5.,5.,4.)), [False,True,False])
+
+        with self.subTest('touching a face counts as intersecting'):
+            # the xy fracture's plane is z=5, which is this box's z-maximum
+            self.assertArrayEqual(
+                g.getFxMaskIn((0.,0.,0.), (10.,10.,5.)), [True,True,True])
+            # ...and a hair above that plane, only that fracture is left out
+            self.assertArrayEqual(
+                g.getFxMaskIn((0.,0.,5.001), (10.,10.,10.)),
+                [False,True,True])
+
+        with self.subTest('open sides'):
+            inf = float('inf')
+            self.assertArrayEqual(
+                g.getFxMaskIn((-inf,-inf,-inf), (inf,inf,inf)), [True]*3)
+            self.assertArrayEqual(
+                g.getFxMaskIn((6.,-inf,-inf), (inf,inf,inf)),
+                [True,False,True])
+
+    def test_mask_perp_to(self):
+        g = self._grid()
+        self.assertArrayEqual(g.getFxMaskPerpTo(0), [False,False,True])
+        self.assertArrayEqual(g.getFxMaskPerpTo('y'), [False,True,False])
+        self.assertArrayEqual(g.getFxMaskPerpTo('Z'), [True,False,False])
+        with self.assertRaises(ValueError):
+            g.getFxMaskPerpTo('w')
+
+    def test_mask_spanning(self):
+        g = self._grid()
+
+        with self.subTest('half-open: the from-face is in, the to-face is not'):
+            self.assertArrayEqual(g.getFxMaskSpanning('x', 0.), [True,True,False])
+            self.assertArrayEqual(g.getFxMaskSpanning('x', 4.), [True,False,False])
+            self.assertArrayEqual(g.getFxMaskSpanning('x', 10.), [False]*3)
+
+        with self.subTest('a fracture never spans its own perpendicular axis'):
+            self.assertFalse(g.getFxMaskSpanning('z', 5.)[0])
+            self.assertFalse(g.getFxMaskSpanning('y', 3.)[1])
+            self.assertFalse(g.getFxMaskSpanning('x', 7.)[2])
+
+    def test_queries_are_not_quantized(self):
+        """A query value finer than N_COORD_DIG is not rounded onto a fracture"""
+        g = self._grid()
+
+        # the yz fracture ends at z=6; a scan plane a ten-thousandth below it
+        # is still inside, and one that far above it is not
+        self.assertTrue(g.getFxMaskSpanning('z', 5.9999)[2])
+        self.assertFalse(g.getFxMaskSpanning('z', 6.0001)[2])
+
+    def test_mask_along_line(self):
+        g = self._grid()
+
+        with self.subTest('a line along z crosses the xy fracture'):
+            # at (x,y), in ascending axis order
+            self.assertArrayEqual(
+                g.getFxMaskAlongLine('z', 1., 1.), [True,False,False])
+
+        with self.subTest('a line along y crosses the xz fracture'):
+            # at (x,z); x=1 is within the xz fracture's 0->4 extent, x=5 is not
+            self.assertArrayEqual(
+                g.getFxMaskAlongLine('y', 1., 1.), [False,True,False])
+            self.assertArrayEqual(
+                g.getFxMaskAlongLine('y', 5., 1.), [False]*3)
+
+        with self.subTest('a line along x crosses the yz fracture'):
+            self.assertArrayEqual(
+                g.getFxMaskAlongLine('x', 1., 1.), [False,False,True])
+            # ...but not above its z extent
+            self.assertArrayEqual(
+                g.getFxMaskAlongLine('x', 1., 7.), [False]*3)
+
+    def test_lengths(self):
+        g = self._grid()
+
+        self.assertArrayEqual(g.getFxLengths(), [
+            [10., 10.,  0.],
+            [ 4.,  0., 10.],
+            [ 0., 10.,  6.],
+        ])
+
+    def test_lengths_clipped(self):
+        g = self._grid()
+
+        with self.subTest('clipping shortens fractures'):
+            self.assertArrayEqual(
+                g.getFxLengths(clip_to=((0.,0.,0.), (5.,5.,5.))), [
+                    [5., 5., 0.],
+                    [4., 0., 5.],
+                    [0., 5., 5.],
+                ])
+
+        with self.subTest('a fracture clipped out of existence has no length'):
+            # the box stops short of the yz fracture, at x=7
+            self.assertArrayEqual(
+                g.getFxLengths(clip_to=((0.,0.,0.), (6.,10.,10.)))[2],
+                [0., 10., 6.])
+
+    def test_areas_and_volumes(self):
+        g = self._grid()
+
+        np.testing.assert_allclose(g.getFxAreas(), [100., 40., 60.])
+        np.testing.assert_allclose(g.getFxVolumes(),
+                [100.*0.0001, 40.*0.00012, 60.*0.000345])
+        np.testing.assert_allclose(
+            g.getFxAreas(clip_to=((0.,0.,0.), (5.,5.,5.))), [25., 20., 25.])
+
+    def test_perp_vals(self):
+        g = self._grid()
+        self.assertArrayEqual(g.getFxPerpVals(), [5., 3., 7.])
+
+    def test_subset(self):
+        g = self._grid()
+        h = g.subsetFx(g.getFxMaskPerpTo('z'))
+
+        self.assertEqual(h.getFxCount(), 1)
+        self.assertEqual(h.getFxCounts(), (0,0,1))
+        self.assertEqual(str(h._fx[0]), str(g._fx[0]))
+
+        with self.subTest('the domain is kept, but grid lines are re-made'):
+            self.assertEqual(h.getDomainStart(), g.getDomainStart())
+            self.assertEqual(h.getDomainEnd(), g.getDomainEnd())
+            # the y=3 and x=7 fracture faces went with the fractures dropped
+            self.assertArrayEqual(h.getGridLines('y'), [0., 10.])
+            self.assertArrayEqual(h.getGridLines('x'), [0., 10.])
+            self.assertArrayEqual(h.getGridLines('z'), [0., 5., 10.])
+
+    def test_subset_by_index(self):
+        g = self._grid()
+        h = g.subsetFx([0,2])
+
+        self.assertEqual(h.getFxCount(), 2)
+        self.assertArrayEqual(h.getFxPerpAxes(), [2,0])
+
+    def test_subset_of_nothing(self):
+        g = self._grid()
+        h = g.subsetFx(np.zeros(3, dtype=bool))
+
+        self.assertEqual(h.getFxCount(), 0)
+        self.assertEqual(h.getFxCounts(), (0,0,0))
+
+    def test_subset_is_a_copy(self):
+        g = self._grid()
+        h = g.subsetFx(np.ones(3, dtype=bool))
+
+        h._fx[0].d = (0., 1., 0., 1., 1., 1.)
+        self.assertArrayEqual(g.getFxCoordinates()[0], [0.,10.,0.,10.,5.,5.])
+        self.assertIs(h._fx[0].myNet, h)
+
+    def test_masks_index_the_accessors(self):
+        """The masks and the vectorized accessors are in the same order"""
+        g = self._grid()
+        m = g.getFxMaskPerpTo('x')
+
+        self.assertArrayEqual(g.getFxCoordinates()[m],
+                [[7., 7., 0., 10., 0., 6.]])
+        np.testing.assert_allclose(g.getFxApertures()[m], [0.000345])
+
+
 class TestStoreStaysConsistent(unittest.TestCase):
     """Operations that move fractures must keep the helper arrays correct"""
 

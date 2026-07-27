@@ -233,6 +233,17 @@ def _i2co(i):
     # exactly, so no further quantization is needed
     return Decimal(int(i)).scaleb(-N_COORD_EXP, _WIDE_CTX)
 
+def _co2f(v):
+    """Return coordinate `v` in (possibly fractional) store units, as a `float`
+
+    Values that only *query* the store --- the position of a scan line, the
+    face of a sampling box --- are not fractures, and quantizing them to
+    `N_COORD_DIG` would move the query by up to half a digit. Scaling them to
+    the store's units as a `float` instead keeps the comparison exact for every
+    coordinate the store can hold, and passes infinities straight through.
+    """
+    return float(v) * CO_SCALE
+
 _CO_INT_LIMIT = Decimal(np.iinfo(STORE_DTYPE).max) / CO_SCALE
 """Largest coordinate magnitude the integer store can hold"""
 
@@ -271,6 +282,19 @@ def _ap2i(v):
 def _i2ap(i):
     """Return an aperture `Decimal` from an integer count of `N_APERT_DIG` units"""
     return Decimal(int(i)).scaleb(-N_APERT_EXP, _WIDE_CTX)
+
+
+def _axis2i(axis):
+    """Return `axis` as the index 0, 1 or 2, accepting 0-2 or 'x', 'y' or 'z'"""
+    if isinstance(axis, str):
+        i = 'xyz'.find(axis.lower())
+    else:
+        i = int(axis)
+
+    if not 0 <= i <= 2:
+        raise ValueError(f'Cannot interpret "{axis}" as an axis')
+
+    return i
 
 
 def nudge(v,increment):
@@ -529,6 +553,116 @@ class OFracArray():
         np.minimum(d[:, 1::2], hi, out=d[:, 1::2])
 
         self._refresh_all()
+
+    # vectorized queries
+    #
+    # Each of these answers a question about every fracture at once, and
+    # returns an (N,) boolean mask that indexes back into this store (and into
+    # anything else of length N, like `apertures`). Masks combine with the
+    # usual `&`, `|` and `~`.
+    def mask_in(self, s, e):
+        """Mask of the fractures that intersect the closed box `s`->`e`
+
+        A fracture that merely touches a face of the box is included, matching
+        the behaviour of `OFrac.truncate`, which keeps such a fracture.
+
+        Parameters
+        ----------
+        s : array-like
+            The minimum coordinate of the box (numeric-type triple); members
+            may be infinite to leave that side of the box open
+        e : array-like
+            The maximum coordinate of the box (numeric-type triple)
+        """
+        d = self._d[:self._n]
+        m = np.ones(self._n, dtype=bool)
+
+        for a in range(3):
+            m &= (d[:, 2*a+1] >= _co2f(s[a])) & (d[:, 2*a] <= _co2f(e[a]))
+
+        return m
+
+    def mask_perp_to(self, axis):
+        """Mask of the fractures whose plane is perpendicular to `axis`"""
+        return self.perp_axes == _axis2i(axis)
+
+    def mask_spanning(self, axis, v):
+        """Mask of the fractures that span the coordinate `v` along `axis`
+
+        The interval tested is half-open, `from <= v < to`, so that abutting
+        fractures do not both claim the coordinate they share, and so that a
+        fracture perpendicular to `axis` (whose interval is empty) never spans
+        anything.
+        """
+        a = _axis2i(axis)
+        d = self._d[:self._n]
+        v = _co2f(v)
+        return (d[:, 2*a] <= v) & (v < d[:, 2*a+1])
+
+    def mask_along_line(self, axis, c1, c2):
+        """Mask of the fractures crossed by a line parallel to `axis`
+
+        The line is at `c1`, `c2` on the two axes other than `axis`, in
+        ascending axis order --- for a line along y, at (x=`c1`, z=`c2`). Only
+        fractures perpendicular to `axis` can be crossed by such a line.
+        """
+        a = _axis2i(axis)
+        (a1, a2) = (i for i in range(3) if i != a)
+
+        return self.mask_perp_to(a) \
+            & self.mask_spanning(a1, c1) \
+            & self.mask_spanning(a2, c2)
+
+    def extents(self, clip_to=None):
+        """Return an (N,3) `numpy.array` of each fracture's extent per axis
+
+        Extents are in `N_COORD_DIG` units. A fracture's extent along the axis
+        perpendicular to it is zero.
+
+        Parameters
+        ----------
+        clip_to : 2-tuple of array-like, or `None`
+            The (minimum, maximum) coordinates of a box to measure the
+            fractures within. Extents are clipped to the box, and a fracture
+            that the box would clip out of existence has an extent of zero
+            along the axis (or axes) that did so. This does not itself exclude
+            fractures outside the box --- combine it with `mask_in` for that.
+        """
+        d = self._d[:self._n].astype(np.int64)
+        (fr, to) = (d[:, 0::2], d[:, 1::2])
+
+        if clip_to is not None:
+            (s, e) = clip_to
+            ii = np.iinfo(STORE_DTYPE)
+            fr = np.maximum(fr, np.fromiter(
+                (_bound2i(v, ii.min) for v in s), dtype=np.int64, count=3))
+            to = np.minimum(to, np.fromiter(
+                (_bound2i(v, ii.max) for v in e), dtype=np.int64, count=3))
+
+        return np.maximum(to-fr, 0)
+
+    def subset(self, which, net=None):
+        """Return a new `OFracArray` holding copies of the chosen fractures
+
+        Parameters
+        ----------
+        which : array-like
+            A boolean mask over this store's fractures, of the kind the
+            `mask_*` methods return, or an array of fracture indices.
+        net : `OFracGrid` or `None`
+            The network that will own the new store.
+        """
+        (d, ap, perp) = (self.coords[which], self.apertures[which],
+                self.perp_axes[which])
+        n = len(d)
+
+        out = OFracArray(net, capacity=n)
+        out._d[:n] = d
+        out._ap[:n] = ap
+        out._perp[:n] = perp
+        out._n = n
+
+        return out
 
     def delete(self, indices):
         """Remove the fractures at `indices`, an iterable of `int`
@@ -1504,6 +1638,118 @@ class OFracGrid():
         `OFrac.determineFracOrientation`. The array is a fresh copy.
         """
         return self._fx.perp_axes.astype(int)
+
+    def getFxPerpVals(self):
+        """Return an (N,) `numpy.array` of each fracture's plane coordinate
+
+        A fracture's plane coordinate is its position on the axis it is
+        perpendicular to, as reported by `getFxPerpAxes`. The array is a fresh
+        copy, as `float`.
+        """
+        return self._fx.perp_vals * (1.0/CO_SCALE)
+
+    def getFxLengths(self, clip_to=None):
+        """Return an (N,3) `numpy.array` of each fracture's extent per axis
+
+        Values are `float`, and a fracture's extent along the axis it is
+        perpendicular to is zero. The array is a fresh copy.
+
+        Parameters
+        ----------
+        clip_to : 2-tuple of array-like, or `None`
+            The (minimum, maximum) coordinates of a box to measure the
+            fractures within, as accepted by `getFxMaskIn`. A fracture that the
+            box would clip out of existence gets an extent of zero along the
+            axis (or axes) that did so, rather than being dropped; this does
+            not exclude fractures lying outside the box, so pair it with
+            `getFxMaskIn` when that matters.
+        """
+        return self._fx.extents(clip_to) * (1.0/CO_SCALE)
+
+    def getFxAreas(self, clip_to=None):
+        """Return an (N,) `numpy.array` of each fracture's area, as `float`
+
+        The area is the product of the fracture's two in-plane extents. See
+        `getFxLengths` for `clip_to`.
+        """
+        ext = self.getFxLengths(clip_to)
+
+        # the extent perpendicular to a fracture is zero, and must not take the
+        # product with it
+        return np.where(np.arange(3) == self.getFxPerpAxes()[:, np.newaxis],
+                1.0, ext).prod(axis=1)
+
+    def getFxVolumes(self, clip_to=None):
+        """Return an (N,) `numpy.array` of each fracture's void volume
+
+        A fracture's volume is its area times its aperture. Values are `float`.
+        See `getFxLengths` for `clip_to`.
+        """
+        return self.getFxAreas(clip_to) * self.getFxApertures()
+
+    # fracture set filtering
+    #
+    # Each of these returns an (N,) boolean mask over this network's fractures,
+    # in the order `iterFracs` and the vectorized accessors above use. Masks
+    # combine with `&`, `|` and `~`, index any of those accessors' arrays, and
+    # are what `subsetFx` takes to make a new network.
+    def getFxMaskIn(self, start, end):
+        """Return a mask of the fractures that intersect the box `start`->`end`
+
+        The box is closed: a fracture that only touches one of its faces is
+        included. Either bound may hold infinities, leaving that side open.
+        """
+        return self._fx.mask_in(start, end)
+
+    def getFxMaskPerpTo(self, axis):
+        """Return a mask of the fractures perpendicular to `axis`
+
+        `axis` may be 0, 1, 2 or 'x', 'y', 'z'. The fractures selected are
+        those whose `getFxPerpAxes` value is that axis.
+        """
+        return self._fx.mask_perp_to(axis)
+
+    def getFxMaskSpanning(self, axis, value):
+        """Return a mask of the fractures spanning `value` on `axis`
+
+        The test is half-open, `from <= value < to`; fractures perpendicular to
+        `axis` are therefore never selected. This picks out the fractures that
+        a plane perpendicular to `axis` at `value` cuts through.
+        """
+        return self._fx.mask_spanning(axis, value)
+
+    def getFxMaskAlongLine(self, axis, c1, c2):
+        """Return a mask of the fractures a line parallel to `axis` crosses
+
+        The line is at `c1`, `c2` on the two axes other than `axis`, in
+        ascending axis order --- for a line along y, at (x=`c1`, z=`c2`).
+        """
+        return self._fx.mask_along_line(axis, c1, c2)
+
+    def subsetFx(self, which):
+        """Return a new `OFracGrid` holding a copy of the chosen fractures
+
+        The new network keeps this one's domain, fixed grid lines and metadata;
+        its grid lines are re-made from the fractures it keeps.
+
+        Parameters
+        ----------
+        which : array-like
+            A boolean mask over this network's fractures, of the kind the
+            `getFxMask*` methods return, or an array of fracture indices.
+        """
+        new = OFracGrid(
+            domainOrigin=self.domainOrigin, domainSize=self.domainSize)
+
+        new._fixedgl = [ s.copy() for s in self._fixedgl ]
+        new._fx = self._fx.subset(which, net=new)
+        new.collapse_policy = self.collapse_policy
+        new.metadata = dict(self.metadata)
+
+        # re-counts the fractures kept, and re-derives grid lines and bounds
+        new._remakeGridLineLists()
+
+        return new
 
     def nudgeAll( self, nudgeTo ):
         """Nudge existing gridlines and all fractures to specified increment.
