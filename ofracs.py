@@ -233,16 +233,36 @@ def _i2co(i):
     # exactly, so no further quantization is needed
     return Decimal(int(i)).scaleb(-N_COORD_EXP, _WIDE_CTX)
 
-def _co2f(v):
-    """Return coordinate `v` in (possibly fractional) store units, as a `float`
+def _2f(v, exp):
+    """Return `v` scaled by `10**exp` as a `float`, without quantizing it
 
     Values that only *query* the store --- the position of a scan line, the
-    face of a sampling box --- are not fractures, and quantizing them to
-    `N_COORD_DIG` would move the query by up to half a digit. Scaling them to
-    the store's units as a `float` instead keeps the comparison exact for every
-    coordinate the store can hold, and passes infinities straight through.
+    face of a sampling box, the edge of an aperture bin --- are not fractures,
+    and quantizing them to a store digit would move the query by up to half a
+    digit. This scales them to the store's units instead, so that a query
+    lands exactly on the values the store holds when the caller wrote it that
+    way. Multiplying by `10**exp` in floating point would not: it is a digit's
+    last bit out for a few per cent of values, which is the difference between
+    a fracture face touching a sampling box and missing it. Infinities pass
+    straight through.
     """
-    return float(v) * CO_SCALE
+    if not isinstance(v, Decimal):
+        # str() of a float is the shortest decimal that reproduces it, which is
+        # the value the caller wrote, rather than the binary approximation of it
+        v = Decimal(str(v))
+
+    if not v.is_finite():
+        return float(v)
+
+    return float(v.scaleb(exp, _WIDE_CTX))
+
+def _co2f(v):
+    """Return coordinate `v` in (possibly fractional) `N_COORD_DIG` units"""
+    return _2f(v, N_COORD_EXP)
+
+def _ap2f(v):
+    """Return aperture `v` in (possibly fractional) `N_APERT_DIG` units"""
+    return _2f(v, N_APERT_EXP)
 
 _CO_INT_LIMIT = Decimal(np.iinfo(STORE_DTYPE).max) / CO_SCALE
 """Largest coordinate magnitude the integer store can hold"""
@@ -1630,6 +1650,29 @@ class OFracGrid():
         The array is a fresh copy; changing it does not change the network.
         """
         return self._fx.apertures * (1.0/AP_SCALE)
+
+    def getFxApertureBins(self, edges):
+        """Return an (N,) `numpy.array` of the aperture bin of each fracture
+
+        Fractures with an aperture below `edges[0]` are in bin 0, those from
+        `edges[i]` up to (but not including) `edges[i+1]` are in bin i+1, and
+        those at or above the last edge are in bin `len(edges)`, so there is
+        one more bin than there are edges. Pass the result to
+        `numpy.bincount(..., minlength=len(edges)+1)` for the frequencies.
+
+        The comparison happens in the store's `N_APERT_DIG` units, so an
+        aperture equal to an edge lands in the bin above it. Comparing the same
+        values as `float` metres would not reliably do that, because scaling a
+        stored aperture to metres rounds it.
+
+        Parameters
+        ----------
+        edges : list-like
+            Aperture values, in metres and in ascending order.
+        """
+        e = np.fromiter(map(_ap2f, edges), dtype=np.float64, count=len(edges))
+
+        return np.searchsorted(e, self._fx.apertures, side='right')
 
     def getFxPerpAxes(self):
         """Return an (N,) `numpy.array` of each fracture's perpendicular axis

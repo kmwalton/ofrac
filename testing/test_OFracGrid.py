@@ -430,6 +430,33 @@ class TestFxFiltering(unittest.TestCase):
         self.assertTrue(g.getFxMaskSpanning('z', 5.9999)[2])
         self.assertFalse(g.getFxMaskSpanning('z', 6.0001)[2])
 
+    def test_queries_land_on_stored_values(self):
+        """A query written as a stored coordinate compares equal to it
+
+        Scaling such a value by CO_SCALE in floating point lands a bit below
+        or above the stored integer for a few per cent of coordinates, which
+        is the difference between a face touching a query and missing it.
+        """
+        g = OFracGrid(domainSize=(10.,10.,10.), fx=[
+            (1.001, 9.999, 1.001, 9.999, 5., 5., 0.0001),
+        ])
+
+        with self.subTest('a box ending on the fracture still touches it'):
+            self.assertArrayEqual(
+                g.getFxMaskIn((0.,0.,0.), (1.001,10.,10.)), [True])
+
+        with self.subTest('a box starting on the far face still touches it'):
+            self.assertArrayEqual(
+                g.getFxMaskIn((9.999,0.,0.), (10.,10.,10.)), [True])
+
+        with self.subTest('a line on the from-face crosses the fracture'):
+            self.assertArrayEqual(
+                g.getFxMaskAlongLine('z', 1.001, 1.001), [True])
+
+        with self.subTest('...but one on the to-face does not'):
+            self.assertArrayEqual(
+                g.getFxMaskAlongLine('z', 9.999, 1.001), [False])
+
     def test_mask_along_line(self):
         g = self._grid()
 
@@ -490,6 +517,40 @@ class TestFxFiltering(unittest.TestCase):
     def test_perp_vals(self):
         g = self._grid()
         self.assertArrayEqual(g.getFxPerpVals(), [5., 3., 7.])
+
+    def test_aperture_bins(self):
+        g = self._grid()  # apertures of 100, 120 and 345 microns
+
+        um = Decimal('1e-6')
+        edges = [ Decimal(v)*um for v in ('50','200','400') ]
+
+        self.assertArrayEqual(g.getFxApertureBins(edges), [1,1,2])
+        self.assertArrayEqual(
+            np.bincount(g.getFxApertureBins(edges), minlength=len(edges)+1),
+            [0,2,1,0])
+
+        with self.subTest('no edges is one bin holding everything'):
+            self.assertArrayEqual(g.getFxApertureBins([]), [0,0,0])
+
+    def test_aperture_bins_are_exact_on_an_edge(self):
+        """An aperture equal to an edge belongs to the bin above it
+
+        Comparing float metres would not reliably do this: scaling a stored
+        aperture to metres lands a bit below the edge for many values.
+        """
+        g = self._grid()
+        aps = [Decimal('0.000100'), Decimal('0.000120'), Decimal('0.000345')]
+
+        for ap in aps:
+            with self.subTest(f'an edge at {ap}'):
+                # the fracture of exactly this aperture is above the edge...
+                self.assertEqual(
+                    list(g.getFxApertureBins([ap])).count(1),
+                    sum(1 for a in aps if a >= ap))
+                # ...and below the next digit up
+                self.assertEqual(
+                    list(g.getFxApertureBins([ap+Decimal('1e-6')])).count(1),
+                    sum(1 for a in aps if a > ap))
 
     def test_subset(self):
         g = self._grid()

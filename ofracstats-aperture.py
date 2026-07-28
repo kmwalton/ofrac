@@ -8,9 +8,8 @@ Documentation intended to work with pdoc3.
 """
 
 import argparse,sys,os,re,copy,traceback,glob,datetime
-from itertools import count,accumulate
+from itertools import count
 from decimal import Decimal
-from bisect import bisect
 from math import log10,sqrt
 
 import numpy as np
@@ -52,30 +51,32 @@ class Binner:
         toM = Decimal('1e-6')
         self.bins = list(map(lambda v:v*toM, sorted(map(Decimal,bins))))
 
-        # store an empty OFracGrid
-        self.grid = OFracGrid()
-
         self.datafns = []
 
         # process all input files to make an aggregate fracture network
+        nets = []
         for fnin in files:
            if __VERBOSITY__:
               print( "========= %s ========="%(fnin))
 
-           fxNet = parse_dfn(fnin)
-           
            self.datafns.append( os.path.basename(fnin) )
-           self.grid = self.grid.merge(fxNet)
+           nets.append( parse_dfn(fnin) )
+
+        # merge in one pass, into an empty grid
+        self.grid = OFracGrid().merge( *nets )
 
         #
         # do the statistics
         #
 
-        # frequencies
-        self.freq = (len(self.bins)+1)*[0,]
-        for f in self.grid.iterFracs():
-            self.freq[ bisect(self.bins, f.ap) ] += 1
+        # population of apertures to be described
+        aps = self.grid.getFxApertures()
 
+        # frequencies; binning is done on the stored apertures, so that an
+        # aperture equal to a bin's edge falls in the bin above it
+        self.freq = np.bincount(
+                self.grid.getFxApertureBins(self.bins),
+                minlength=len(self.bins)+1)
 
         # descriptive statistics
 
@@ -84,12 +85,6 @@ class Binner:
             (0,(0.,0.), 0.,0.,0.,0.,)
         (lognormalmean, lognormalvar) = (0.,0.)
         logfunc = np.log10
-
-        # population of apertures to be described
-        aps = np.fromiter(
-                map( lambda f: f.ap, self.grid.iterFracs()),
-                dtype=np.float_)
-
 
         # degenerate population
         if aps.size == 1:
@@ -110,13 +105,13 @@ class Binner:
             'Geometric mean':gmean(aps),
             'Variance':variance,
             'Skewness':skewness,
-            'Max. Frequency':max(self.freq),
+            'Max. Frequency':int(self.freq.max()),
             'lognormal mean':lognormalmean,
             'lognormal var':lognormalvar,
         }
 
         # cumulative density function
-        self.cdf = list( v/N for v in accumulate(self.freq) )
+        self.cdf = np.cumsum(self.freq) / max(N, 1)
 
     def strTecplotHeader(self):
         """Return a string for a Tecplot ASCII file header"""
@@ -231,11 +226,8 @@ class Binner:
 
 
     def makeDescStats(self):
-        aps = np.fromiter(map( lambda f: f.ap, self.grid.iterFracs()), dtype=np.float_)
-        (N,(apMin,apMax),mean,variance,skewness,kurtosis) = describe(aps)
-
-        s = '\n'.join( f'{k:15} = {v!s}' for (k,v) in self.descStats.items() )
-        return s
+        return '\n'.join(
+            f'{k:15} = {v!s}' for (k,v) in self.descStats.items() )
 
 
 
