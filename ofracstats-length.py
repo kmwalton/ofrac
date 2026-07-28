@@ -22,11 +22,14 @@ from tabulate import tabulate
 from decimal import Decimal
 
 try:
-    from ofrac.ofracs import OFrac,OFracGrid,NotValidOFracGridError
-except ModuleNotFoundError:
+    from ofrac import ofracs
+    from ofrac.ofracs import OFracGrid,NotValidOFracGridError
+except ImportError:
+    # 'ofrac' can also resolve to the sub-package beside this script, which
+    # holds no 'ofracs'; that is an ImportError rather than a missing module
     # accommodate "old style" PYTHONPATHing to within this module
     import ofracs
-    from ofracs import OFrac,OFracGrid,NotValidOFracGridError
+    from ofracs import OFracGrid,NotValidOFracGridError
 
 __VERBOSITY__ = 0
 
@@ -50,9 +53,15 @@ class OFracBinner():
         return s
 
     def get_bin_bounds(self):
-        """Return list of string representations of bins."""
+        """Return list of string representations of bins.
+
+        There is one more bin than there are divisions: the first holds the
+        values below the first division, which would otherwise go unreported.
+        """
         b = self.binLabels
-        foo=[ f'{a!s}-{b!s}' for (a,b) in zip(b[:-1], b[1:]) ] + [f'>{b[-1]}',]
+        foo=[ f'0-{b[0]!s}', ] \
+            + [ f'{a!s}-{b!s}' for (a,b) in zip(b[:-1], b[1:]) ] \
+            + [ f'>{b[-1]}', ]
         return foo
 
     def strTecplotFooter(self):
@@ -79,47 +88,32 @@ class LengthBinner(OFracBinner):
 
         super().__init__('Length [m]', bins,)
 
-        if len(files) > 1:
-            raise NotImplementedError('TODO: reuse code to merge grids')
-
         self.bins = [ float(v) for v in bins ]
 
-        # store an empty OFracGrid
-        self.grid = OFracGrid()
-        
-        # TODO make more robust, loop through more filenames
-        fxNet = ofracs.parse(files[0])
+        # merge every input file into one network, in one pass
+        self.grid = OFracGrid().merge( *map(ofracs.parse, files) )
 
-        self.grid = self.grid.merge(fxNet)
+        # a fracture is a length along each of the two axes in its plane, and
+        # nothing along the axis it is perpendicular to
+        inPlane = self.grid.getFxPlaneAxes()
+        lengths = self.grid.getFxLengths()
 
-        # gather lengths in numpy array
-        counts = self.grid.getFxCounts()
-        length_data = [ np.ndarray((counts[1]+counts[2],)),
-                        np.ndarray((counts[2]+counts[0],)),
-                        np.ndarray((counts[0]+counts[1],)),
-        ]
-
-        counts = [0,0,0]
-        for i,f in enumerate(self.grid.iterFracs()):
-            o = OFrac.determineFracOrientation(f)
-
-            l1 = (o+1)%3
-            l2 = (o+2)%3
-
-            length_data[l1][counts[l1]] = f.d[2*l1+1]-f.d[2*l1]
-            length_data[l2][counts[l2]] = f.d[2*l2+1]-f.d[2*l2]
-
-            counts[l1] += 1
-            counts[l2] += 1
+        # bin on the stored coordinates, so that a length equal to a bin's edge
+        # falls in the bin above it
+        lengthBins = self.grid.getFxLengthBins(self.bins)
 
         self.histo = {}
         self.auxd = dict( (c,[]) for c in 'xyz' )
         for i,c in enumerate('xyz'):
-            self.histo[c] = np.histogram(
-                    length_data[i],
-                    bins = self.bins+[1e308,])[0]
+            length_data = lengths[inPlane[:, i], i]
 
-            if len(length_data[i]) == 0:
+            # bin 0 holds the lengths below the first division; it is reported
+            # like any other, so that every length counted in N appears
+            self.histo[c] = np.bincount(
+                    lengthBins[inPlane[:, i], i],
+                    minlength=len(self.bins)+1)
+
+            if len(length_data) == 0:
                 self.auxd[c].extend( [
                     ('N',0,''),
                     ('ARITHMETICMEAN',f'-',''),
@@ -131,8 +125,8 @@ class LengthBinner(OFracBinner):
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore",
                         category=RuntimeWarning, message="Precision loss occurred")
-                stats = scipy.stats.describe(length_data[i])
-            gmean = scipy.stats.gmean(length_data[i])
+                stats = scipy.stats.describe(length_data)
+            gmean = scipy.stats.gmean(length_data)
 
             self.auxd[c].extend( [
                 ('N',stats.nobs,''),
@@ -167,7 +161,7 @@ class LengthBinner(OFracBinner):
         s = ''
 
         for i,c in enumerate('xyz'):
-            s += f'''ZONE T="{c}-length" I={len(self.bins)}\n'''
+            s += f'''ZONE T="{c}-length" I={len(self.bins)+1}\n'''
 
             for k,v,comm in self.auxd[c]:
                 if comm:

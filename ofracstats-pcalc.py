@@ -342,7 +342,7 @@ class FractureZone:                                         #{{{
       self.vol = znet.getFxVolumes()
       """(M,) void volume (area times aperture) of each fracture"""
 
-      self.in_plane = np.arange(3) != self.perp[:, np.newaxis]
+      self.in_plane = znet.getFxPlaneAxes()
       """(M,3) mask of the two axes lying in each fracture's plane"""
 
       # lengths are measured within the zone only when the user asks for that
@@ -600,8 +600,10 @@ def doEverything(args, batchDir=''):
        if __VERBOSITY__:
           print( "Boundaries of fractures: {}".format(subZone) )
           print( "Number of fractures counted: %d" % ( sum(nfile) ) )
-          for i,o in enumerate(INDO.values()):
-             print( "Number in %s-plane: %d" % ( o, nfile[i] ) )
+          # getFxCounts is indexed by the axis a fracture is perpendicular to,
+          # so index 0 counts the fractures in the yz-plane
+          for i,ax in enumerate('xyz'):
+             print( "Number in %s-plane: %d" % ( PERP[ax], nfile[i] ) )
        del nfile
 
     # superimpose the networks of all files

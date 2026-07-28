@@ -505,6 +505,41 @@ class TestFxFiltering(unittest.TestCase):
                 g.getFxLengths(clip_to=((0.,0.,0.), (6.,10.,10.)))[2],
                 [0., 10., 6.])
 
+    def test_plane_axes(self):
+        g = self._grid()
+
+        self.assertArrayEqual(g.getFxPlaneAxes(), [
+            [ True,  True, False],   # xy
+            [ True, False,  True],   # xz
+            [False,  True,  True],   # yz
+        ])
+
+        with self.subTest('it selects the lengths of a fracture'):
+            (ext, inPlane) = (g.getFxLengths(), g.getFxPlaneAxes())
+            self.assertArrayEqual(ext[inPlane[:, 0], 0], [10., 4.])
+            self.assertTrue(np.all(ext[~inPlane] == 0.))
+
+    def test_length_bins(self):
+        g = self._grid()  # extents of (10,10,0), (4,0,10) and (0,10,6)
+
+        edges = [5., 8.]
+        b = g.getFxLengthBins(edges)
+
+        self.assertArrayEqual(b, [
+            [2, 2, 0],
+            [0, 0, 2],
+            [0, 2, 1],
+        ])
+
+        with self.subTest('an extent equal to an edge is in the bin above'):
+            self.assertArrayEqual(g.getFxLengthBins([4., 6., 10.])[:, 0],
+                    [3, 1, 0])
+
+        with self.subTest('clipping moves fractures between bins'):
+            self.assertArrayEqual(
+                g.getFxLengthBins(edges, clip_to=((0.,0.,0.),(5.,5.,5.)))[:, 0],
+                [1, 0, 0])
+
     def test_areas_and_volumes(self):
         g = self._grid()
 

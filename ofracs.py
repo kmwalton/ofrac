@@ -1682,6 +1682,16 @@ class OFracGrid():
         """
         return self._fx.perp_axes.astype(int)
 
+    def getFxPlaneAxes(self):
+        """Return an (N,3) boolean `numpy.array` of the axes in each fx's plane
+
+        An entry is `True` where that axis lies in the fracture's plane --- the
+        two axes it has extent along --- and `False` for the axis it is
+        perpendicular to. This selects the entries of `getFxLengths` that are
+        lengths of a fracture, rather than the zero across it.
+        """
+        return np.arange(3) != self.getFxPerpAxes()[:, np.newaxis]
+
     def getFxPerpVals(self):
         """Return an (N,) `numpy.array` of each fracture's plane coordinate
 
@@ -1708,6 +1718,29 @@ class OFracGrid():
             `getFxMaskIn` when that matters.
         """
         return self._fx.extents(clip_to) * (1.0/CO_SCALE)
+
+    def getFxLengthBins(self, edges, clip_to=None):
+        """Return an (N,3) `numpy.array` of the length bin of each fracture
+
+        Bins are as `getFxApertureBins` gives them: an extent below `edges[0]`
+        is in bin 0, one from `edges[i]` up to (but not including) `edges[i+1]`
+        is in bin i+1, and there is one more bin than there are edges. The
+        comparison happens in the store's `N_COORD_DIG` units, so an extent
+        equal to an edge lands in the bin above it without that resting on
+        which way scaling the extent to metres happens to round.
+
+        Every fracture has an entry for all three axes, including the zero
+        extent across itself, which falls in bin 0; `getFxPlaneAxes` selects
+        the two that are lengths. See `getFxLengths` for `clip_to`.
+
+        Parameters
+        ----------
+        edges : list-like
+            Lengths, in metres and in ascending order.
+        """
+        e = np.fromiter(map(_co2f, edges), dtype=np.float64, count=len(edges))
+
+        return np.searchsorted(e, self._fx.extents(clip_to), side='right')
 
     def getFxAreas(self, clip_to=None):
         """Return an (N,) `numpy.array` of each fracture's area, as `float`
