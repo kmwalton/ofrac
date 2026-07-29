@@ -43,8 +43,114 @@ id  xfrom    xto    yfrom    yto    zfrom   zto  aperture  orientation
  1    0.0     1.0     0.5     0.5     0.0    1.0  0.000100   2
 ```
 
-For linear and planar measures, sample scan lines and scan planes are chosen
-uniformly in the sub-zone that is being sampled.
+Placement of scan lines and scan planes
+=======================================
+
+The P-system measures of Dershowitz & Herda (1992) are *stereological*
+estimators: P10 (fractures per metre of scan line) and P20/P22 (per unit area of
+scan plane) are defined as expectations over a randomly placed probe. What the
+code reports is therefore an estimate of a mean, and how the probes are placed
+governs how noisy that estimate is. Selected with ``--sampling``.
+
+``random`` -- independent uniform placements
+--------------------------------------------
+The historical rule: each scan line's position is drawn independently and
+uniformly. This is plain Monte Carlo integration, so the standard error decays
+as N^(-1/2) and, more importantly, independent points in one dimension have
+exponentially distributed gaps -- the placements *clump*, leaving parts of the
+domain unprobed. Retained for reproducing earlier results and for measuring how
+much the alternatives buy.
+
+``lhs`` -- Latin hypercube placement (default)
+----------------------------------------------
+Each placement axis is divided into N equal strata and one jittered point is
+taken per stratum; the coordinate lists for the two axes are then paired at
+random. This is the Latin hypercube design of McKay, Beckman & Conover (1979).
+Its defining property is that *every one-dimensional projection* is perfectly
+stratified, which is what is wanted here because the two placement axes seldom
+matter equally -- a cross-section domain may be 50 m in x and 1 m in y.
+
+This is stratified sampling in the sense of Cochran (1977); for the
+piecewise-constant counting functions integrated here it removes the clumping
+term that dominates the plain Monte Carlo error. Related, and worth reading if
+this is pushed further: quasi-Monte Carlo with low-discrepancy (Sobol' or
+Halton) sequences -- see Niederreiter (1992) -- and the Koksma-Hlawka
+inequality, which bounds integration error by the product of the integrand's
+variation and the point set's discrepancy.
+
+An axis is skipped entirely when it provably carries no information: if every
+candidate fracture spans the zone's full extent along that axis, the
+intersection test cannot depend on that coordinate. All N strata are then spent
+on the axis that does vary. Note this is an exact test on fracture extents, not
+an assumption drawn from a dimension being thin -- a 1 m "unit" dimension whose
+fractures do *not* all span it is still sampled, which is what separates a
+genuinely thin 3D domain from a pseudo-2D one. Each zone reports
+``spanning_frac`` and ``axis_extent`` per axis so the distinction is visible.
+
+``exact`` -- closed-form expectation, no sampling
+--------------------------------------------------
+For axis-aligned (orthogonal) fracture sets these expectations can be evaluated
+analytically, giving the exact answer at zero variance and less cost than N
+probes.
+
+*P10.* A scan line along axis d0 is positioned at a point (c1, c2) in the plane
+of the other two axes. A fracture perpendicular to d0 occupies a rectangle
+[a1,b1) x [a2,b2) in that plane, and the line crosses it exactly when (c1, c2)
+falls inside the rectangle. The number of crossings is therefore the number of
+rectangles covering the point, and averaging over a uniformly placed line is
+integrating that coverage function over the placement plane:
+
+    E[count] = ( 1 / A ) * SUM_i  |[a1,b1) ^ zone|_d1 * |[a2,b2) ^ zone|_d2
+
+    E[P10]   = E[count] / m
+
+with A the zone's area in the placement plane, m the scan-line length, and
+``^`` an interval intersection. The numerator is just the total fracture area
+of the set perpendicular to d0, so this reproduces the standard stereological
+identity that P10 measured along d equals P32 of the fractures normal to d --
+i.e. the general P32 = (2/pi) * P10 relation for isotropic fracturing collapses
+to a factor of one when every fracture is normal to the scan line.
+
+*P20 / P22.* A scan plane normal to axis d is positioned at a coordinate c along
+d, so placement is one-dimensional and ``lhs`` degenerates to ordinary
+stratification. A fracture cuts the plane exactly when c lies in its extent
+[lo,hi) along d, so each fracture is weighted by that extent over the zone's
+length on d:
+
+    w_i      = |[lo,hi) ^ zone|_d / L_d
+    E[P20]   = ( SUM_i w_i * ends_i / 2 ) / A_plane
+    E[P22]   = ( SUM_i w_i * area_i )     / A_plane
+
+This is the Cauchy/Buffon-style argument behind classical stereology: the
+probability that a probe meets a body is proportional to the body's projected
+extent along the probe's placement direction. See Underwood (1970) or Baddeley
+& Jensen (2005) for the general treatment, and Mauldon (1994) / Zhang & Einstein
+(1998) for the fracture-network case, including the sampling-bias corrections
+that matter when traces are censored at the domain boundary.
+
+**Caveat.** The closed forms above assume the fractures are a stationary set
+within the zone, and they say nothing about the *variance* between individual
+probes -- which is a real property of a network (fracture spacing statistics),
+not only an artefact. Use ``--sampling lhs`` when that distribution is the
+object of interest, and ``exact`` when the mean is.
+
+References
+----------
+* Dershowitz, W.S. & Herda, H.H. (1992) Interpretation of fracture spacing and
+  intensity. *Proc. 33rd U.S. Symp. Rock Mechanics*, 757-766.
+* McKay, M.D., Beckman, R.J. & Conover, W.J. (1979) A comparison of three
+  methods for selecting values of input variables. *Technometrics* 21(2),
+  239-245.
+* Cochran, W.G. (1977) *Sampling Techniques*, 3rd ed. Wiley.
+* Niederreiter, H. (1992) *Random Number Generation and Quasi-Monte Carlo
+  Methods*. SIAM.
+* Underwood, E.E. (1970) *Quantitative Stereology*. Addison-Wesley.
+* Baddeley, A. & Jensen, E.B.V. (2005) *Stereology for Statisticians*. Chapman
+  & Hall/CRC.
+* Mauldon, M. (1994) Intersection probabilities of impersistent joints.
+  *Int. J. Rock Mech. Min. Sci.* 31(2), 107-115.
+* Zhang, L. & Einstein, H.H. (1998) Estimating the mean trace length of rock
+  discontinuities. *Rock Mech. Rock Engng.* 31(4), 217-235.
 
 For documenttion of JSON output, see `ofrac.p_system`, or run
 
@@ -93,6 +199,111 @@ except ModuleNotFoundError:
 
 __VERBOSITY__ = 0
 """Module level verbosity"""
+
+__SAMPLING__ = 'lhs'
+"""How scan lines and scan planes are positioned.  One of:
+
+   'random'  independent uniform draws -- simple Monte Carlo, the historical
+             behaviour.  Error falls as N^-1/2 and the placements clump.
+   'lhs'     Latin hypercube: one placement per equal-width stratum on every
+             placement axis, paired at random.  Default.
+   'exact'   no sampling at all; the expectation over all placements is
+             evaluated in closed form.  Zero variance.
+
+See "Placement of scan lines and scan planes" in the module docstring.
+"""
+
+__RNG__ = None
+"""numpy Generator for placements.  Created on first use, seeded from the OS
+unless --seed was given -- i.e. irreproducible by default, as before."""
+
+
+def _rng():
+    global __RNG__
+    if __RNG__ is None:
+        __RNG__ = np.random.default_rng()
+    return __RNG__
+
+
+def _init_worker(sampling, seed):
+    """Carry the placement settings into a pool worker.
+
+    Workers re-import the module, so anything set from the command line at
+    module scope is back at its default in the child.  Called via
+    ``Pool(initializer=...)``.
+
+    A seeded run gives each worker a *different* stream derived from the same
+    seed (``SeedSequence.spawn``-like behaviour via seed+pid): identical
+    placements in every worker would correlate the zones rather than make the
+    run reproducible in any useful sense.
+    """
+    global __SAMPLING__, __RNG__
+    __SAMPLING__ = sampling
+    if seed is not None:
+        __RNG__ = np.random.default_rng([seed, os.getpid()])
+
+
+def _overlap(a, b, lo, hi):
+    """Length of the intersection of each interval [a,b) with [lo,hi]."""
+    return np.clip(np.minimum(b, hi) - np.maximum(a, lo), 0.0, None)
+
+
+def _strata(lo, hi, n):
+    """`n` jittered positions, one per equal-width stratum of [lo,hi].
+
+    One-dimensional stratified (jittered) sampling.  Unbiased, and for the
+    piecewise-constant counting functions used here it removes the clumping
+    that independent uniform draws produce.
+    """
+    if hi <= lo:
+        return np.full(n, float(lo))
+    return np.linspace(lo, hi, n, endpoint=False) + _rng().random(n) * ((hi - lo) / n)
+
+
+def _uniform(lo, hi, n):
+    """`n` independent uniform positions -- the historical placement rule."""
+    if hi <= lo:
+        return np.full(n, float(lo))
+    return _rng().uniform(lo, hi, n)
+
+
+def _mid(r):
+    return 0.5 * (r[0] + r[1])
+
+
+def _placements(r1, r2, n, informative=(True, True)):
+    """Positions for `n` scan lines on the plane spanned by two axes.
+
+    Returns ``(c1, c2)``, each of length `n`.
+
+    Under ``'lhs'`` each axis is split into `n` equal strata with one jittered
+    point per stratum, and the two coordinate lists are paired at random.  That
+    is a Latin hypercube design (McKay, Beckman & Conover 1979): *every*
+    one-dimensional projection is perfectly stratified, which matters here
+    because the two placement axes rarely contribute equally.
+
+    An axis flagged non-informative is not sampled at all -- every placement
+    takes its mid-point, and all `n` strata are spent on the axis that does
+    carry information.
+    """
+    i1, i2 = informative
+
+    if __SAMPLING__ == 'random':
+        # deliberately ignores `informative`: this mode exists to reproduce the
+        # historical placement rule exactly, so it stays a clean baseline to
+        # measure the alternatives against
+        return _uniform(*r1, n), _uniform(*r2, n)
+
+    if i1 and i2:
+        c1 = _strata(*r1, n)
+        c2 = _strata(*r2, n)
+        _rng().shuffle(c2)          # random pairing == Latin hypercube
+        return c1, c2
+    if i1:
+        return _strata(*r1, n), np.full(n, _mid(r2))
+    if i2:
+        return np.full(n, _mid(r1)), _strata(*r2, n)
+    return np.full(n, _mid(r1)), np.full(n, _mid(r2))
 
 ##############################################################################
 #
@@ -371,6 +582,34 @@ class FractureZone:                                         #{{{
       """
       self.nScan = n
 
+   def _informative(self, a, b, d):
+      """Does moving the placement along axis `d` change what is intersected?
+
+      False only when *every* candidate fracture spans the zone's full extent
+      on `d`; then the intersection test cannot depend on that coordinate and
+      sampling it is wasted effort.
+
+      This is an exact test on the fracture extents, **not** an inference from
+      the domain being thin.  A 1 m "unit" dimension whose fractures do not all
+      span it is still informative and is still sampled -- which is the case
+      that distinguishes a genuinely thin 3D domain from a pseudo-2D one.
+      """
+      if a.size == 0:
+         return False
+      return not bool(np.all((a <= self.zn.st(d)) & (b >= self.zn.en(d))))
+
+   def spanning_fraction(self, d):
+      """Fraction of this zone's fractures spanning its full extent on axis `d`.
+
+      1.0 together with a small extent is the signature of a pseudo-2D domain;
+      anything less means the dimension carries real structure.  Reported per
+      zone so the distinction is visible in the output rather than assumed.
+      """
+      if len(self.d) == 0:
+         return float('nan')
+      a, b = self.d[:, 2*d], self.d[:, 2*d+1]
+      return float(np.count_nonzero((a <= self.zn.st(d)) & (b >= self.zn.en(d)))) / len(self.d)
+
    def P10( self, dScanLine, nScanLine=None ):
 
       if not nScanLine:
@@ -395,8 +634,26 @@ class FractureZone:                                         #{{{
       if __VERBOSITY__ > 1:
          print('\nP10-{} for scanline at:'.format(dScanLine))
 
+      if __SAMPLING__ == 'exact':
+         # Closed form.  count(c1,c2) is the number of axis-aligned rectangles
+         # [a1,b1)x[a2,b2) containing the placement point, so its mean over a
+         # uniformly placed scan line is the summed rectangle area (clipped to
+         # the zone) divided by the placement area.  See the module docstring.
+         A = self.zn.size(d1) * self.zn.size(d2)
+         if A <= 0.0 or m <= 0.0:
+            return P10Result(dScanLine, m, 0, 0.0, float('inf'))
+         area = (_overlap(a1, b1, *self.zn.r(d1))
+                 * _overlap(a2, b2, *self.zn.r(d2))).sum()
+         cbar = float(area) / A            # expected crossings per scan line
+         return P10Result(dScanLine, m, int(round(cbar)), m, cbar / m)
+
+      # placement axes carrying no information are collapsed to their mid-point
+      inf1 = self._informative(a1, b1, d1)
+      inf2 = self._informative(a2, b2, d2)
+      cs1, cs2 = _placements(self.zn.r(d1), self.zn.r(d2), nScanLine, (inf1, inf2))
+
       for ci in range(nScanLine):
-         (c1,c2) = ( uniform(*self.zn.r(d1)), uniform(*self.zn.r(d2)) )
+         (c1, c2) = (cs1[ci], cs2[ci])
 
          hits = (a1 <= c1) & (c1 < b1) & (a2 <= c2) & (c2 < b2)
          count = int(np.count_nonzero(hits))
@@ -489,8 +746,28 @@ class FractureZone:                                         #{{{
          cEnds += isEnd & (aFrom >= self.zn.st(a))
          cEnds += isEnd & (aTo <= self.zn.en(a))
 
+      planeArea = self.zn.size(d1) * self.zn.size(d2)
+
+      if __SAMPLING__ == 'exact':
+         # Closed form.  A fracture cuts the plane iff the plane's position
+         # falls in its extent [lo,hi) along d, so the mean over a uniformly
+         # placed plane weights each fracture by that extent (clipped to the
+         # zone) over the zone's length on d.  One 1-D integral per quantity.
+         L = self.zn.size(d)
+         if L <= 0.0:
+            w = np.ones(len(cArea))            # degenerate zone: the plane is the zone
+         else:
+            w = _overlap(lo, hi, *self.zn.r(d)) / L
+         return (float((cEnds * w).sum()) / 2.0,
+                 float((cArea * w).sum()),
+                 planeArea)
+
+      # scan-plane placement is one-dimensional, so 'lhs' reduces to stratified
+      positions, _ = _placements(self.zn.r(d), (0.0, 0.0), nScanPlane,
+                                 (self._informative(lo, hi, d), False))
+
       for plane in range(nScanPlane):
-         positionOfPlane = uniform(*self.zn.r(d))
+         positionOfPlane = positions[plane]
 
          # prune to the fractures that intersect this plane
          onPlane = (lo <= positionOfPlane) & (positionOfPlane < hi)
@@ -499,7 +776,7 @@ class FractureZone:                                         #{{{
          fracEndCount += int(cEnds[onPlane].sum())
          fracArea += float(cArea[onPlane].sum())
 
-         scanPlaneTotalArea += self.zn.size(d1) * self.zn.size(d2)
+         scanPlaneTotalArea += planeArea
 
       return ( int(fracEndCount/2), fracArea, scanPlaneTotalArea )
 
@@ -513,8 +790,11 @@ class FractureZone:                                         #{{{
         fCount, fArea, spArea = self.P20_P22(dperpScanPlane, nScanPlane)
 
         if spArea == 0.0:
-            return P20Result(dperpScanPlane, fCount, spArea, float('inf'))
-        return P20Result(dperpScanPlane, fCount, spArea, float(fCount) / spArea)
+            return P20Result(dperpScanPlane, int(round(fCount)), spArea, float('inf'))
+        # f_count is a reporting field and is formatted as an integer; the P20
+        # value itself keeps the (fractional) expectation under 'exact'
+        return P20Result(dperpScanPlane, int(round(fCount)), spArea,
+                         float(fCount) / spArea)
 
    def P22(self, dperpScanPlane, nScanPlane=None):
         if not nScanPlane:
@@ -527,8 +807,10 @@ class FractureZone:                                         #{{{
         size_1, size_2 = [self.zn.size(_d) for _d in PERP[dperpScanPlane]]
 
         if spArea == 0.0:
-            return P22Result(dperpScanPlane, size_1, size_2, fCount, spArea, float('inf'))
-        return P22Result(dperpScanPlane, size_1, size_2, fCount, spArea, float(fArea) / spArea)
+            return P22Result(dperpScanPlane, size_1, size_2,
+                             int(round(fCount)), spArea, float('inf'))
+        return P22Result(dperpScanPlane, size_1, size_2,
+                         int(round(fCount)), spArea, float(fArea) / spArea)
 
    def P30(self):
         f_count = len(self)
@@ -658,7 +940,10 @@ def doEverything(args, batchDir=''):
     if args.max_cpus == 1:
         for (izn, (zn, fzn)) in enumerate(zip(sampleZn, fzns)):
 
-            _d = { 'SubDomain':str(zn), 'nscan':args.n, 'nfracs':len(fzn), }
+            _d = { 'SubDomain':str(zn), 'nscan':args.n, 'nfracs':len(fzn),
+                   'sampling':__SAMPLING__,
+                   'spanning_frac':{ d:fzn.spanning_fraction(DIR[d]) for d in sorted(DIR) },
+                   'axis_extent':{ d:zn.size(DIR[d]) for d in sorted(DIR) }, }
 
             _r = list(map(_run_calc_job, ((fzn, j) for j in _jobs)))
 
@@ -668,10 +953,19 @@ def doEverything(args, batchDir=''):
 
     else:
 
-        with multiprocessing.Pool(args.max_cpus) as pool:
+        # Worker processes re-import this module, so module-level settings
+        # revert to their defaults there.  Push them across explicitly: without
+        # this, --sampling and --seed are silently ignored whenever
+        # --max-cpus > 1, and every zone is computed with the defaults.
+        with multiprocessing.Pool(args.max_cpus,
+                                  initializer=_init_worker,
+                                  initargs=(__SAMPLING__, args.seed)) as pool:
             for (izn, (zn, fzn)) in enumerate(zip(sampleZn, fzns)):
 
-                _d = { 'range':str(zn), 'nscan':args.n, 'nfracs':len(fzn), }
+                _d = { 'range':str(zn), 'nscan':args.n, 'nfracs':len(fzn),
+                       'sampling':__SAMPLING__,
+                       'spanning_frac':{ d:fzn.spanning_fraction(DIR[d]) for d in sorted(DIR) },
+                       'axis_extent':{ d:zn.size(DIR[d]) for d in sorted(DIR) }, }
 
                 _r = pool.map(_run_calc_job, ((fzn, j) for j in _jobs))
                 results.append(_r)
@@ -800,6 +1094,24 @@ if __name__ == '__main__':
     parser.add_argument( "-v", "--verbose", action='count', default=0,
            help="Print more detail with each -v on the command line")
 
+    parser.add_argument( "--sampling", choices=('random','lhs','exact'),
+            default='lhs',
+            help="how scan lines/planes are positioned: 'random' = independent "
+                 "uniform draws (the historical rule, error ~N^-1/2, placements "
+                 "clump); 'lhs' = Latin hypercube, one jittered placement per "
+                 "stratum on every placement axis (default); 'exact' = no "
+                 "sampling, the expectation over all placements evaluated in "
+                 "closed form (zero variance, and -n is ignored)")
+
+    parser.add_argument( "--use-estimator", dest='sampling',
+            action='store_const', const='exact',
+            help="alias for --sampling exact")
+
+    parser.add_argument( "--seed", type=int, default=None,
+            help="seed the placement RNG, making a sampled run reproducible. "
+                 "Unseeded by default, so repeat runs reveal the sampling "
+                 "spread. Irrelevant to --sampling exact, which is deterministic")
+
     parser.add_argument( "-n", type=int, default=10,
            help="Number of scan lines or planes to use")
 
@@ -865,6 +1177,10 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     __VERBOSITY__ = args.verbose
+
+    __SAMPLING__ = args.sampling
+    if args.seed is not None:
+        __RNG__ = np.random.default_rng(args.seed)
 
     if args.max_cpus > 1 and args.verbose > 0:
         print(f'Verbosity level {args.verbose} selected. Resetting --max-cpus from {args.max_cpus} to 1.')
