@@ -278,18 +278,51 @@ class TestWorkerPropagation(unittest.TestCase):
     def test_init_worker_sets_the_mode(self):
         prev = (pcalc.__SAMPLING__, pcalc.__RNG__)
         try:
-            pcalc._init_worker('exact', None)
+            pcalc._init_worker('exact')
             self.assertEqual(pcalc.__SAMPLING__, 'exact')
         finally:
             pcalc.__SAMPLING__, pcalc.__RNG__ = prev
 
-    def test_init_worker_seeds_when_asked(self):
-        prev = (pcalc.__SAMPLING__, pcalc.__RNG__)
-        try:
-            pcalc._init_worker('lhs', 99)
-            self.assertIsNotNone(pcalc.__RNG__)
-        finally:
-            pcalc.__SAMPLING__, pcalc.__RNG__ = prev
+
+class TestJobSeeding(unittest.TestCase):
+    """--seed must pin a measure's placements, not a worker's stream.
+
+    Seeding per process made the answer depend on which worker picked up which
+    job, so a seeded run was reproducible only at --max-cpus 1.
+    """
+
+    def test_unseeded_runs_get_no_generator(self):
+        self.assertIsNone(pcalc._job_rng(None, 0, 0))
+
+    def test_same_job_and_seed_give_the_same_stream(self):
+        a = pcalc._job_rng(11, 2, 5).random(8)
+        b = pcalc._job_rng(11, 2, 5).random(8)
+        np.testing.assert_array_equal(a, b)
+
+    def test_different_jobs_get_independent_streams(self):
+        base = pcalc._job_rng(11, 0, 0).random(8)
+        for izn, ijob in ((0, 1), (1, 0), (1, 1)):
+            other = pcalc._job_rng(11, izn, ijob).random(8)
+            self.assertFalse(np.array_equal(base, other),
+                             f'zone {izn} job {ijob} repeats zone 0 job 0')
+
+    def test_a_seeded_measure_is_reproducible(self):
+        """What the seed is for: same seed, same P10, however it was scheduled."""
+        vals = []
+        for _ in range(3):
+            fzn, _ = _fixture_zone()
+            with _SamplingMode('lhs', seed=None):
+                vals.append(fzn.P10('x', 32, rng=pcalc._job_rng(4, 0, 0)).P10)
+        self.assertEqual(len(set(vals)), 1)
+
+    def test_an_explicit_generator_beats_the_module_one(self):
+        """The job's generator must win, or the module global leaks back in."""
+        fzn, _ = _fixture_zone()
+        with _SamplingMode('lhs', seed=1):
+            a = fzn.P10('x', 32, rng=pcalc._job_rng(4, 0, 0)).P10
+        with _SamplingMode('lhs', seed=999):
+            b = fzn.P10('x', 32, rng=pcalc._job_rng(4, 0, 0)).P10
+        self.assertEqual(a, b)
 
 
 if __name__ == '__main__':

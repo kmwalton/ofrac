@@ -214,33 +214,54 @@ See "Placement of scan lines and scan planes" in the module docstring.
 """
 
 __RNG__ = None
-"""numpy Generator for placements.  Created on first use, seeded from the OS
-unless --seed was given -- i.e. irreproducible by default, as before."""
+"""numpy Generator used when no per-job generator was supplied.  Created on
+first use and seeded from the OS -- i.e. irreproducible, which is what an
+unseeded run should be.  A seeded run does not go through here at all; see
+`_job_rng`."""
 
 
-def _rng():
+def _rng(rng=None):
+    """The generator to draw from: `rng` if given, else the module-level one."""
     global __RNG__
+    if rng is not None:
+        return rng
     if __RNG__ is None:
         __RNG__ = np.random.default_rng()
     return __RNG__
 
 
-def _init_worker(sampling, seed):
+def _job_rng(seed, izn, ijob):
+    """The generator for one measure of one zone, or None when unseeded.
+
+    Seeding is per *job* rather than per process on purpose.  The placements a
+    measure draws then depend only on ``(seed, zone, measure)`` and not on where
+    the job ran, so ``--seed`` gives the same answer at any ``--max-cpus`` --
+    including bit-for-bit agreement between the serial and pooled paths.
+
+    Seeding per worker instead cannot do this: which job a worker picks up is a
+    race on the pool's task queue, so the stream a given measure draws from is
+    not pinned even when each worker's own stream is.
+
+    The jobs still get mutually independent streams -- distinct spawn keys off
+    one root -- so nothing is correlated across zones or measures.
+    """
+    if seed is None:
+        return None
+    return np.random.default_rng([seed, izn, ijob])
+
+
+def _init_worker(sampling):
     """Carry the placement settings into a pool worker.
 
     Workers re-import the module, so anything set from the command line at
     module scope is back at its default in the child.  Called via
     ``Pool(initializer=...)``.
 
-    A seeded run gives each worker a *different* stream derived from the same
-    seed (``SeedSequence.spawn``-like behaviour via seed+pid): identical
-    placements in every worker would correlate the zones rather than make the
-    run reproducible in any useful sense.
+    The seed is not carried across here -- it travels with each task instead,
+    see `_job_rng`.
     """
-    global __SAMPLING__, __RNG__
+    global __SAMPLING__
     __SAMPLING__ = sampling
-    if seed is not None:
-        __RNG__ = np.random.default_rng([seed, os.getpid()])
 
 
 def _overlap(a, b, lo, hi):
@@ -248,7 +269,7 @@ def _overlap(a, b, lo, hi):
     return np.clip(np.minimum(b, hi) - np.maximum(a, lo), 0.0, None)
 
 
-def _strata(lo, hi, n):
+def _strata(lo, hi, n, rng=None):
     """`n` jittered positions, one per equal-width stratum of [lo,hi].
 
     One-dimensional stratified (jittered) sampling.  Unbiased, and for the
@@ -257,21 +278,22 @@ def _strata(lo, hi, n):
     """
     if hi <= lo:
         return np.full(n, float(lo))
-    return np.linspace(lo, hi, n, endpoint=False) + _rng().random(n) * ((hi - lo) / n)
+    return np.linspace(lo, hi, n, endpoint=False) \
+        + _rng(rng).random(n) * ((hi - lo) / n)
 
 
-def _uniform(lo, hi, n):
+def _uniform(lo, hi, n, rng=None):
     """`n` independent uniform positions -- the historical placement rule."""
     if hi <= lo:
         return np.full(n, float(lo))
-    return _rng().uniform(lo, hi, n)
+    return _rng(rng).uniform(lo, hi, n)
 
 
 def _mid(r):
     return 0.5 * (r[0] + r[1])
 
 
-def _placements(r1, r2, n, informative=(True, True)):
+def _placements(r1, r2, n, informative=(True, True), rng=None):
     """Positions for `n` scan lines on the plane spanned by two axes.
 
     Returns ``(c1, c2)``, each of length `n`.
@@ -292,17 +314,17 @@ def _placements(r1, r2, n, informative=(True, True)):
         # deliberately ignores `informative`: this mode exists to reproduce the
         # historical placement rule exactly, so it stays a clean baseline to
         # measure the alternatives against
-        return _uniform(*r1, n), _uniform(*r2, n)
+        return _uniform(*r1, n, rng), _uniform(*r2, n, rng)
 
     if i1 and i2:
-        c1 = _strata(*r1, n)
-        c2 = _strata(*r2, n)
-        _rng().shuffle(c2)          # random pairing == Latin hypercube
+        c1 = _strata(*r1, n, rng)
+        c2 = _strata(*r2, n, rng)
+        _rng(rng).shuffle(c2)       # random pairing == Latin hypercube
         return c1, c2
     if i1:
-        return _strata(*r1, n), np.full(n, _mid(r2))
+        return _strata(*r1, n, rng), np.full(n, _mid(r2))
     if i2:
-        return np.full(n, _mid(r1)), _strata(*r2, n)
+        return np.full(n, _mid(r1)), _strata(*r2, n, rng)
     return np.full(n, _mid(r1)), np.full(n, _mid(r2))
 
 ##############################################################################
@@ -610,7 +632,7 @@ class FractureZone:                                         #{{{
       a, b = self.d[:, 2*d], self.d[:, 2*d+1]
       return float(np.count_nonzero((a <= self.zn.st(d)) & (b >= self.zn.en(d)))) / len(self.d)
 
-   def P10( self, dScanLine, nScanLine=None ):
+   def P10( self, dScanLine, nScanLine=None, rng=None ):
 
       if not nScanLine:
          nScanLine = self.nScan
@@ -650,7 +672,8 @@ class FractureZone:                                         #{{{
       # placement axes carrying no information are collapsed to their mid-point
       inf1 = self._informative(a1, b1, d1)
       inf2 = self._informative(a2, b2, d2)
-      cs1, cs2 = _placements(self.zn.r(d1), self.zn.r(d2), nScanLine, (inf1, inf2))
+      cs1, cs2 = _placements(self.zn.r(d1), self.zn.r(d2), nScanLine,
+                             (inf1, inf2), rng)
 
       for ci in range(nScanLine):
          (c1, c2) = (cs1[ci], cs2[ci])
@@ -718,7 +741,7 @@ class FractureZone:                                         #{{{
 
       return stats
 
-   def P20_P22(self, dperpScanPlane, nScanPlane):
+   def P20_P22(self, dperpScanPlane, nScanPlane, rng=None):
 
       fracEndCount = 0
       fracCount = 0
@@ -764,7 +787,7 @@ class FractureZone:                                         #{{{
 
       # scan-plane placement is one-dimensional, so 'lhs' reduces to stratified
       positions, _ = _placements(self.zn.r(d), (0.0, 0.0), nScanPlane,
-                                 (self._informative(lo, hi, d), False))
+                                 (self._informative(lo, hi, d), False), rng)
 
       for plane in range(nScanPlane):
          positionOfPlane = positions[plane]
@@ -780,14 +803,14 @@ class FractureZone:                                         #{{{
 
       return ( int(fracEndCount/2), fracArea, scanPlaneTotalArea )
 
-   def P20(self, dperpScanPlane, nScanPlane=None):
+   def P20(self, dperpScanPlane, nScanPlane=None, rng=None):
         if not nScanPlane:
             nScanPlane = self.nScan
 
         if self.zn.size(DIR[dperpScanPlane]) == 0.0:
             nScanPlane = 1
 
-        fCount, fArea, spArea = self.P20_P22(dperpScanPlane, nScanPlane)
+        fCount, fArea, spArea = self.P20_P22(dperpScanPlane, nScanPlane, rng)
 
         if spArea == 0.0:
             return P20Result(dperpScanPlane, int(round(fCount)), spArea, float('inf'))
@@ -796,14 +819,14 @@ class FractureZone:                                         #{{{
         return P20Result(dperpScanPlane, int(round(fCount)), spArea,
                          float(fCount) / spArea)
 
-   def P22(self, dperpScanPlane, nScanPlane=None):
+   def P22(self, dperpScanPlane, nScanPlane=None, rng=None):
         if not nScanPlane:
             nScanPlane = self.nScan
 
         if self.zn.size(DIR[dperpScanPlane]) == 0.0:
             nScanPlane = 1
 
-        fCount, fArea, spArea = self.P20_P22(dperpScanPlane, nScanPlane)
+        fCount, fArea, spArea = self.P20_P22(dperpScanPlane, nScanPlane, rng)
         size_1, size_2 = [self.zn.size(_d) for _d in PERP[dperpScanPlane]]
 
         if spArea == 0.0:
@@ -843,15 +866,20 @@ class FractureZone:                                         #{{{
 
 # for multiprocessing
 def _run_calc_job(task_args):
-    """Unpacks and runs a FractureZone method with its arguments."""
-    fzn, (method, arg) = task_args
+    """Unpacks and runs a FractureZone method with its arguments.
 
-    # If the method doesn't take an extra direction argument (like P30, P32, P33)
+    The generator arrives with the task rather than being read off a module
+    global, so a job's placements do not depend on which process ran it.
+    """
+    fzn, (method, arg), rng = task_args
+
+    # If the method doesn't take an extra direction argument (like P30, P32,
+    # P33).  Those are exact counts and sums -- no placements, so no generator.
     if arg is None:
         return method(fzn)
 
     # If it does take an argument (like P10, P20, P22)
-    return method(fzn, arg)
+    return method(fzn, arg, rng=rng)
 
 
 def doEverything(args, batchDir=''):
@@ -945,7 +973,9 @@ def doEverything(args, batchDir=''):
                    'spanning_frac':{ d:fzn.spanning_fraction(DIR[d]) for d in sorted(DIR) },
                    'axis_extent':{ d:zn.size(DIR[d]) for d in sorted(DIR) }, }
 
-            _r = list(map(_run_calc_job, ((fzn, j) for j in _jobs)))
+            _r = list(map(_run_calc_job,
+                          ((fzn, j, _job_rng(args.seed, izn, ij))
+                           for ij, j in enumerate(_jobs))))
 
             results.append(_r)
             _d.update(_organize_PXXResults(_r))
@@ -954,20 +984,23 @@ def doEverything(args, batchDir=''):
     else:
 
         # Worker processes re-import this module, so module-level settings
-        # revert to their defaults there.  Push them across explicitly: without
-        # this, --sampling and --seed are silently ignored whenever
-        # --max-cpus > 1, and every zone is computed with the defaults.
+        # revert to their defaults there.  Push --sampling across explicitly:
+        # without this it is silently ignored whenever --max-cpus > 1, and every
+        # zone is computed with the default.  The seed travels per task instead,
+        # so that the answer does not depend on which worker took which job.
         with multiprocessing.Pool(args.max_cpus,
                                   initializer=_init_worker,
-                                  initargs=(__SAMPLING__, args.seed)) as pool:
+                                  initargs=(__SAMPLING__,)) as pool:
             for (izn, (zn, fzn)) in enumerate(zip(sampleZn, fzns)):
 
-                _d = { 'range':str(zn), 'nscan':args.n, 'nfracs':len(fzn),
+                _d = { 'SubDomain':str(zn), 'nscan':args.n, 'nfracs':len(fzn),
                        'sampling':__SAMPLING__,
                        'spanning_frac':{ d:fzn.spanning_fraction(DIR[d]) for d in sorted(DIR) },
                        'axis_extent':{ d:zn.size(DIR[d]) for d in sorted(DIR) }, }
 
-                _r = pool.map(_run_calc_job, ((fzn, j) for j in _jobs))
+                _r = pool.map(_run_calc_job,
+                              [(fzn, j, _job_rng(args.seed, izn, ij))
+                               for ij, j in enumerate(_jobs)])
                 results.append(_r)
 
                 _d.update(_organize_PXXResults(_r))
@@ -1108,9 +1141,12 @@ if __name__ == '__main__':
             help="alias for --sampling exact")
 
     parser.add_argument( "--seed", type=int, default=None,
-            help="seed the placement RNG, making a sampled run reproducible. "
-                 "Unseeded by default, so repeat runs reveal the sampling "
-                 "spread. Irrelevant to --sampling exact, which is deterministic")
+            help="seed the placement RNG, making a sampled run reproducible -- "
+                 "and reproducible at any --max-cpus, since each measure's "
+                 "placements are derived from the seed rather than from the "
+                 "process that happened to run it. Unseeded by default, so "
+                 "repeat runs reveal the sampling spread. Irrelevant to "
+                 "--sampling exact, which is deterministic")
 
     parser.add_argument( "-n", type=int, default=10,
            help="Number of scan lines or planes to use")
@@ -1179,8 +1215,8 @@ if __name__ == '__main__':
     __VERBOSITY__ = args.verbose
 
     __SAMPLING__ = args.sampling
-    if args.seed is not None:
-        __RNG__ = np.random.default_rng(args.seed)
+    # args.seed is not turned into a generator here: each job derives its own
+    # from it, so that the result does not depend on --max-cpus.  See _job_rng.
 
     if args.max_cpus > 1 and args.verbose > 0:
         print(f'Verbosity level {args.verbose} selected. Resetting --max-cpus from {args.max_cpus} to 1.')
