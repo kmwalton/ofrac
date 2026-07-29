@@ -321,6 +321,28 @@ def nudge(v,increment):
     """Nudge v to the nearest multiple of increment."""
     return ((v/increment).quantize(0) * increment).quantize(N_COORD_DIG)
 
+def as_nudge_triple(nudgeTo):
+    """Return per-axis nudge increments as a 3-tuple of Decimals.
+
+    Accepts either a scalar, meaning the same increment on every axis, or a
+    sequence of three, meaning (x, y, z).  An axis whose increment is zero is
+    left untouched, so ``(0, 0, 0.025)`` nudges in z only.
+
+    Anisotropic nudging matters when one axis needs finer discretization than
+    the others: refining z alone avoids dragging the x grid finer across the
+    whole domain, which an isotropic increment would do.
+    """
+    if isinstance(nudgeTo, (str, bytes)) or not hasattr(nudgeTo, '__len__'):
+        inc = D_CO(nudgeTo)
+        return (inc, inc, inc)
+
+    vals = list(nudgeTo)
+    if len(vals) != 3:
+        raise ValueError(
+            'nudge increment must be a scalar or three values (x, y, z); '
+            f'got {len(vals)}')
+    return tuple(D_CO(v) for v in vals)
+
 DINF = Decimal('infinity')
 
 def toDTuple(s):
@@ -950,21 +972,26 @@ class OFrac():
     def nudge(self, nudgeIncrement):
         """Modify a fracture to new "nudged" coordinates.
 
-        If the `nudgeIncrement` is zero, do nothing and return success (True).
+        `nudgeIncrement` may be a scalar, for the same increment on every axis,
+        or three values (x, y, z) for anisotropic nudging.  An axis whose
+        increment is zero is left alone; if all three are zero, do nothing and
+        return success (True).
         """
 
         returnstatus = True
 
-        nudgeIncrement = D_CO(nudgeIncrement)
+        inc = as_nudge_triple(nudgeIncrement)
 
-        if float(nudgeIncrement) == 0.:
+        if all(float(i) == 0. for i in inc):
             return True
 
-        def myNudger(v):
-            return nudge(v,nudgeIncrement)
+        def myNudger(iv):
+            # self.d is (xfrom, xto, yfrom, yto, zfrom, zto): axis is index // 2
+            i, v = iv
+            return v if float(inc[i // 2]) == 0. else nudge(v, inc[i // 2])
 
         d = self.d
-        newd = tuple(map(myNudger, d))
+        newd = tuple(map(myNudger, enumerate(d)))
 
         _policy = __FX_COLLAPSE_POLICY__
         if self.myNet is not None:
@@ -1830,25 +1857,29 @@ class OFracGrid():
     def nudgeAll( self, nudgeTo ):
         """Nudge existing gridlines and all fractures to specified increment.
 
+        `nudgeTo` may be a scalar, for the same increment on every axis, or
+        three values (x, y, z) for anisotropic nudging.  An axis whose increment
+        is zero is left untouched, so ``(0, 0, 0.025)`` conditions z only and
+        leaves the x grid at whatever resolution it already had.
+
         Fixed gridlines are not nudged.
 
         Removes fractures or fails depending on __FX_COLLAPSE_POLICY__
 
-        If the `nudgeTo` is zero, do nothing.
+        If every increment is zero, do nothing.
         """
 
-        nudgeInc = D_CO(nudgeTo)
+        nudgeInc = as_nudge_triple(nudgeTo)
 
-        if float(nudgeInc) == 0.:
-            return 
+        if all(float(i) == 0. for i in nudgeInc):
+            return
 
         _gvsave = self._gridValid
 
-        def nudger(v):
-            return nudge(v,nudgeInc)
-
         for a in range(3):
-            newGL = set(map(nudger, self._gl[a]))
+            if float(nudgeInc[a]) == 0.:
+                continue
+            newGL = set(nudge(v, nudgeInc[a]) for v in self._gl[a])
             newGL.update(self._fixedgl[a])
             self._gl[a] = sorted(newGL)
 

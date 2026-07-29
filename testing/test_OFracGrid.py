@@ -10,7 +10,7 @@ from decimal import Decimal
 
 import numpy as np
 
-from ofrac.ofracs import (OFrac, OFracArray, OFracGrid)
+from ofrac.ofracs import (OFrac, OFracArray, OFracGrid, as_nudge_triple)
 from ofrac.ofracs import (CO_SCALE, AP_SCALE, STORE_DTYPE,
         _co2i, _i2co, _ap2i, _i2ap)
 
@@ -780,3 +780,56 @@ TestOFracArray.assertArrayEqual = TestOFracGrid.assertArrayEqual
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestAnisotropicNudging(unittest.TestCase):
+    """`nudgeAll` / `OFrac.nudge` accept a scalar or a per-axis triple.
+
+    Anisotropic nudging exists so one axis can be conditioned without dragging
+    the others finer: refining z alone leaves the x grid at its own resolution,
+    which an isotropic increment cannot do.
+    """
+
+    def _net(self):
+        # one x-normal and one z-normal fracture, both off any round increment
+        return OFracGrid(
+            domainOrigin=(0, 0, 0), domainSize=(10, 1, 10),
+            fx=[OFrac(1.234, 1.234, 0.0, 1.0, 2.0, 8.0, 1e-4),
+                OFrac(1.0, 9.0, 0.0, 1.0, 3.456, 3.456, 1e-4)])
+
+    def test_scalar_is_isotropic(self):
+        g = self._net()
+        g.nudgeAll(0.1)
+        d = [tuple(float(v) for v in f.d) for f in g.iterFracs()]
+        self.assertAlmostEqual(d[0][0], 1.2)
+        self.assertAlmostEqual(d[1][4], 3.5)
+
+    def test_triple_nudges_only_the_named_axis(self):
+        g = self._net()
+        g.nudgeAll([0, 0, 0.1])
+        d = [tuple(float(v) for v in f.d) for f in g.iterFracs()]
+        self.assertAlmostEqual(d[0][0], 1.234, msg='x must be untouched')
+        self.assertAlmostEqual(d[1][4], 3.5, msg='z must be nudged')
+
+    def test_triple_leaves_untouched_axis_gridlines_alone(self):
+        g = self._net()
+        before = [float(v) for v in g.iterGridLines(0)]
+        g.nudgeAll([0, 0, 0.1])
+        self.assertEqual(before, [float(v) for v in g.iterGridLines(0)])
+
+    def test_all_zero_is_a_no_op(self):
+        g = self._net()
+        before = [tuple(float(v) for v in f.d) for f in g.iterFracs()]
+        g.nudgeAll([0, 0, 0])
+        self.assertEqual(before, [tuple(float(v) for v in f.d) for f in g.iterFracs()])
+
+    def test_wrong_length_is_rejected(self):
+        with self.assertRaises(ValueError):
+            as_nudge_triple([0.1, 0.1])
+
+    def test_scalar_and_equal_triple_agree(self):
+        a, b = self._net(), self._net()
+        a.nudgeAll(0.1)
+        b.nudgeAll([0.1, 0.1, 0.1])
+        self.assertEqual([tuple(f.d) for f in a.iterFracs()],
+                         [tuple(f.d) for f in b.iterFracs()])
