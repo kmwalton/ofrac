@@ -404,8 +404,10 @@ class SpatialZone:            # {{{
             start | st,
             end | e, or
             size | si
-         may preceed triples. In the absence of keywords, the first triple is
-         assumed to be the 'start' and the second is assumed to be 'size'.
+         may preceed triples. A triple without a keyword takes the first corner
+         a keyword did not claim, in the order start then end -- so '(a)(b)' is
+         start a, end b, and 'st(a)(b)' means the same. A lone triple with no
+         keyword at all is the 'size', measured from the origin.
 
 
          truncateToZone : bool
@@ -425,29 +427,34 @@ class SpatialZone:            # {{{
 
          e = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
          triple=r"\( *({}), *({}), *({}) *\)".format(e,e,e)
-         word="((?:st(?:art)?)|(?:e(?:nd)?)|(?:si(?:ze)?))"
+         # one triple, optionally introduced by the keyword naming which corner
+         # it is.  Longer keywords lead the alternation so that 'start' is not
+         # read as 'st' and 'end' not as 'e'.
+         token = re.compile(r"(?:\b(start|st|size|si|end|e)\b[^()]*?)?"+triple)
 
-         coords = list( re.finditer("({})".format(triple), asString) )
+         WHICH = { 'start':'start', 'st':'start',
+                   'size' :'size' , 'si':'size' ,
+                   'end'  :'end'  , 'e' :'end'  , }
 
-         if len(coords) == 2:
-            m = re.search("(?:st(?:art)?.*?)?"+triple, asString)
-            if m:
-               start = tuple( map(float,m.groups()[0:3]) )
-               asString = asString[m.end():]
+         named = {}
+         unkeyed = []
+         for m in token.finditer(asString):
+            vals = tuple( map(float, m.groups()[1:4]) )
+            if m.group(1):
+               named.setdefault(WHICH[m.group(1)], vals)
             else:
-               start = (0.0,0.0,0.0)
-         else:
-            start = (0.0,0.0,0.0)
+               unkeyed.append(vals)
 
+         # A lone triple is the size; otherwise unkeyed triples fill the corners
+         # the keywords left free, start before end.  Parsing them positionally
+         # is what makes the keyword-free '(a)(b)' spelling work.
+         order = ['size'] if len(unkeyed) == 1 and not named else ['start','end']
+         for slot, vals in zip((s for s in order if s not in named), unkeyed):
+            named[slot] = vals
 
-         size, end = None, None,
-
-         m_si = re.search("si(?:ze)?.*?"+triple, asString)
-         m_e = re.search("e(?:nd)?.*?"+triple, asString)
-         if m_si:
-            size = tuple( map(float,m_si.groups()[0:3]) )
-         elif m_e:
-            end = tuple( map(float,m_e.groups()[0:3]) )
+         start = named.get('start', (0.0,0.0,0.0))
+         size = named.get('size')
+         end = named.get('end')
 
          if not size and not end:
             print( "'{}' did not contain enough start, size or end info".format(strSave), file=sys.stderr )

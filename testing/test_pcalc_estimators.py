@@ -20,7 +20,9 @@ normal to z and it covers the whole plane, so every scan line crosses it
 exactly once over a scan length of 2 m -> P10-z = 0.5 /m.
 """
 
+import contextlib
 import importlib.util
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -270,6 +272,66 @@ class TestExactP20P22(unittest.TestCase):
         with _SamplingMode('lhs', seed=3):
             got = fzn.P22('z', 2048).P22
         self.assertAlmostEqual(got, want, delta=0.02 * want)
+
+
+class TestZoneParsing(unittest.TestCase):
+    """The spellings --sample-zones advertises must all parse.
+
+    Only the forms with an explicit size/end keyword used to work: a triple that
+    no keyword introduced was never read, so every keyword-free spelling in the
+    help text -- including a lone '(5,5,5)' -- exited with "did not contain
+    enough start, size or end info".
+    """
+
+    def _zone(self, s):
+        return str(pcalc.SpatialZone(asString=s))
+
+    def test_the_documented_spellings_of_one_zone_agree(self):
+        """Every spelling the help gives for (0,0,3)..(5,5,4) is that zone."""
+        want = 'x:(0.0, 5.0) y:(0.0, 5.0) z:(3.0, 4.0)'
+        for s in ('start(0,0,3) end(5,5,4)',
+                  'st(0,0,3)e(5,5,4)',
+                  '(0,0,3)(5,5,4)',
+                  'start(0,0,3) size(5,5,1)',
+                  '(0,0,3)si(5,5,1)'):
+            self.assertEqual(self._zone(s), want, msg=f'spelling {s!r}')
+
+    def test_a_lone_triple_is_a_size_from_the_origin(self):
+        self.assertEqual(self._zone('(5.0,5.0,5.0)'),
+                         'x:(0.0, 5.0) y:(0.0, 5.0) z:(0.0, 5.0)')
+
+    def test_a_bare_second_triple_is_the_end_not_the_size(self):
+        """The help's 3-zone example only fits in its domain under this reading."""
+        self.assertEqual(self._zone('(0,0,2.5)(5,5,5)'),
+                         'x:(0.0, 5.0) y:(0.0, 5.0) z:(2.5, 5.0)')
+
+    def test_an_unkeyed_triple_fills_the_corner_left_free(self):
+        want = 'x:(0.0, 5.0) y:(0.0, 5.0) z:(3.0, 4.0)'
+        self.assertEqual(self._zone('st(0,0,3)(5,5,4)'), want)
+        self.assertEqual(self._zone('(0,0,3)end(5,5,4)'), want)
+
+    def test_keywords_may_come_in_any_order(self):
+        self.assertEqual(self._zone('end(5,5,4)start(0,0,3)'),
+                         'x:(0.0, 5.0) y:(0.0, 5.0) z:(3.0, 4.0)')
+
+    def test_start_is_not_read_as_st_nor_end_as_e(self):
+        """The keyword alternation must prefer the longer spelling."""
+        self.assertEqual(self._zone('start(1,1,1)end(2,2,2)'),
+                         'x:(1.0, 2.0) y:(1.0, 2.0) z:(1.0, 2.0)')
+
+    def test_negative_and_exponent_coordinates(self):
+        """A keyword-less 'e' must not be confused with an exponent."""
+        self.assertEqual(self._zone('(-5,-5,-5)(5,5,5)'),
+                         'x:(-5.0, 5.0) y:(-5.0, 5.0) z:(-5.0, 5.0)')
+        self.assertEqual(self._zone('(1e1,0,0)'),
+                         'x:(0.0, 10.0) y:(0.0, 0.0) z:(0.0, 0.0)')
+
+    def test_a_zone_with_no_extent_is_still_rejected(self):
+        """A start on its own says nothing about how big the zone is."""
+        with self.assertRaises(SystemExit):
+            with open(os.devnull, 'w') as devnull:
+                with contextlib.redirect_stderr(devnull):
+                    pcalc.SpatialZone(asString='start(1,1,1)')
 
 
 class TestWorkerPropagation(unittest.TestCase):
