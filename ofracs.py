@@ -19,6 +19,7 @@ Documentation intended to work with pdoc3.
 
 import sys
 import warnings
+import inspect
 import re
 import os
 import pickle
@@ -402,6 +403,36 @@ class NotValidOFracGridError(Exception):
     def __init__(self, message):
         self.message = message
 
+class LargeNetworkWarning(UserWarning):
+    """The network is large enough that a quadratic search over it is costly"""
+    def __init__(self, message):
+        self.message = message
+
+LARGE_NETWORK = 20000
+"""Fracture count above which a quadratic search warns about its own cost
+
+`OFracArray.intersection_pairs` compares every fracture against every fracture
+of a different orientation, which is fast enough to be worth its simplicity
+until roughly this many fractures. Past that the comparisons grow as the square
+of the count while the intersections found grow about linearly, so almost all
+of the work is spent rejecting pairs that a spatial sort would never have
+proposed. Set this to `None` to silence the warning.
+"""
+
+def _caller_stacklevel():
+    """Return the `warnings.warn` stacklevel of the first frame outside here
+
+    A warning about how expensive a call is should name the line that made the
+    call, but the depth of this module's own frames beneath that line depends
+    on which entry point was used. Count them instead of guessing.
+    """
+    (f, n) = (inspect.currentframe(), 0)
+
+    while f is not None and f.f_globals.get('__name__') == __name__:
+        (f, n) = (f.f_back, n+1)
+
+    return max(n, 1)
+
 
 __FX_COLLAPSE_POLICIES__ = ['fail', 'warn-omit', 'omit', 'ignore',]
 """Policies useful when nudging fractures.
@@ -682,6 +713,100 @@ class OFracArray():
                 (_bound2i(v, ii.max) for v in e), dtype=np.int64, count=3))
 
         return np.maximum(to-fr, 0)
+
+    # connectivity
+    def intersection_pairs(self, include_coplanar=False, max_block=1<<22):
+        """Return an (M,2) `numpy.array` of intersecting pairs of fractures
+
+        Each row is a pair of fracture indices, `i` < `j`, whose planes touch.
+        Rows are in ascending order, and each pair appears once. Two fractures
+        in *different* orientations intersect where one crosses (or lands on)
+        the other; because a fracture is degenerate along the axis it is
+        perpendicular to, that is exactly the condition that their bounding
+        boxes overlap, which is what this tests. The boxes are closed, so a
+        fracture terminating on another --- the usual case in an orthogonal
+        network, where faces are shared exactly --- counts as intersecting.
+
+        Parameters
+        ----------
+        include_coplanar : bool
+            Also pair up fractures of the *same* orientation that lie in the
+            same plane and overlap or abut. Such a pair is one continuous
+            fracture as far as flow is concerned, but it is not an
+            intersection, so it is excluded by default.
+        max_block : int
+            The largest number of candidate pairs to test at once. Pairs are
+            tested in a vectorized sweep of one orientation against another,
+            which is quadratic in the fracture count; this bounds the memory
+            that sweep takes, not the work it does.
+        """
+        n = self._n
+        if n < 2:
+            return np.zeros((0, 2), dtype=np.intp)
+
+        if LARGE_NETWORK is not None and n > LARGE_NETWORK:
+            warnings.warn(LargeNetworkWarning(
+                f'Searching {n:,} fractures for intersections by comparing '
+                f'every pair of them. That is ~{n*n//3:,} comparisons, nearly '
+                'all of which will reject. Sorting the fractures along an axis '
+                'first, and comparing only those whose intervals can still '
+                'overlap, would make this close to linear. Raise '
+                f'ofracs.LARGE_NETWORK (currently {LARGE_NETWORK:,}), or set '
+                'it to None, to silence this.'),
+                stacklevel=_caller_stacklevel())
+
+        idx = np.arange(n, dtype=np.intp)
+        groups = [ idx[self._perp[:n] == a] for a in range(3) ]
+
+        combos = list(itertools.combinations(range(3), 2))
+        if include_coplanar:
+            combos += [ (a, a) for a in range(3) ]
+
+        found = []
+        for (a, b) in combos:
+            (ia, ib) = (groups[a], groups[b])
+            if ia.size and ib.size:
+                found += self._pairs_between(ia, ib, a == b, max_block)
+
+        if not found:
+            return np.zeros((0, 2), dtype=np.intp)
+
+        pairs = np.concatenate(found)
+        pairs.sort(axis=1)
+        return pairs[np.lexsort((pairs[:, 1], pairs[:, 0]))]
+
+    def _pairs_between(self, ia, ib, same, max_block):
+        """Return a list of (m,2) arrays of overlapping (`ia`, `ib`) pairs
+
+        `same` tells this that the two index sets are the same set, in which
+        case only the pairs with `i` < `j` are kept, so that a fracture is not
+        paired with itself and no pair is reported twice.
+        """
+        d = self._d[:self._n]
+        (loa, hia) = (d[ia][:, 0::2], d[ia][:, 1::2])
+        (lob, hib) = (d[ib][:, 0::2], d[ib][:, 1::2])
+
+        (na, nb) = (len(ia), len(ib))
+        step = max(1, int(max_block)//nb)
+
+        out = []
+        for s in range(0, na, step):
+            e = min(s+step, na)
+
+            # closed-interval overlap, on every axis at once
+            m = np.ones((e-s, nb), dtype=bool)
+            for ax in range(3):
+                m &= (loa[s:e, ax, np.newaxis] <= hib[np.newaxis, :, ax]) \
+                   & (lob[np.newaxis, :, ax] <= hia[s:e, ax, np.newaxis])
+
+            if same:
+                m &= ia[s:e, np.newaxis] < ib[np.newaxis, :]
+
+            (r, c) = np.nonzero(m)
+            if r.size:
+                out.append(np.stack((ia[s:e][r], ib[c]), axis=1))
+
+        return out
 
     def subset(self, which, net=None):
         """Return a new `OFracArray` holding copies of the chosen fractures
@@ -1149,6 +1274,49 @@ class OFrac():
             np.fromiter((_co2i(v) for v in state['d']),
                 dtype=STORE_DTYPE, count=6),
             _ap2i(state['ap']))
+
+def _label_components(n, pairs):
+    """Return an (n,) array labelling the connected components of a graph
+
+    `pairs` is an (M,2) array of edges between the `n` vertices. Labels are
+    assigned in descending order of component size --- so label 0 is always the
+    largest component --- and ties are broken by the lowest member, so that the
+    same graph always gets the same labels.
+
+    This is a union-find rather than anything from `scipy`, so that the
+    connectivity filters do not put a `scipy` import on the path of a module
+    that otherwise needs only `numpy`.
+    """
+    parent = np.arange(n, dtype=np.intp)
+
+    def find(i):
+        root = i
+        while parent[root] != root:
+            root = parent[root]
+        # path compression: hang everything seen off the root
+        while parent[i] != root:
+            (parent[i], i) = (root, parent[i])
+        return root
+
+    for (i, j) in pairs:
+        (ri, rj) = (find(int(i)), find(int(j)))
+        if ri != rj:
+            # link to the lower index, keeping each root the least member of
+            # its component
+            (lo, hi) = (ri, rj) if ri < rj else (rj, ri)
+            parent[hi] = lo
+
+    roots = np.fromiter((find(i) for i in range(n)), dtype=np.intp, count=n)
+
+    (uniq, inv, cnt) = np.unique(roots,
+        return_inverse=True, return_counts=True)
+
+    # biggest component first; np.lexsort takes its primary key last
+    rank = np.empty(len(uniq), dtype=np.intp)
+    rank[np.lexsort((uniq, -cnt))] = np.arange(len(uniq))
+
+    return rank[inv.reshape(n)]
+
 
 class OFracGrid():
     """Container/Utility class for an orthogonal fracture network."""
@@ -1828,6 +1996,172 @@ class OFracGrid():
         ascending axis order --- for a line along y, at (x=`c1`, z=`c2`).
         """
         return self._fx.mask_along_line(axis, c1, c2)
+
+    # connectivity
+    #
+    # A fracture conducts into another where the two intersect, which for
+    # orthogonal fractures means fractures of two different orientations
+    # crossing or terminating on one another. That relation is a graph over the
+    # fractures, and its connected components are the network's clusters: a
+    # cluster of one is a fracture that meets nothing, and a cluster that does
+    # not reach the boundary conditions is dead storage. The `getFxMask*`
+    # methods here return masks like the filters above, so they compose with
+    # them and with `subsetFx`.
+    #
+    # Nothing here is cached: each call recomputes from the current fractures.
+    # Pass a `labels` array between calls to share the work.
+    def getFxIntersections(self, include_coplanar=False):
+        """Return an (M,2) `numpy.array` of intersecting pairs of fractures
+
+        Rows hold pairs of fracture indices, `i` < `j`, in ascending order.
+        Only fractures in different orientations can intersect; see
+        `OFracArray.intersection_pairs`, including for `include_coplanar`.
+        """
+        return self._fx.intersection_pairs(include_coplanar)
+
+    def getFxIntersectionCounts(self, include_coplanar=False):
+        """Return an (N,) `numpy.array` of how many fractures each one meets
+
+        A count of zero is a fracture that intersects nothing at all. That is a
+        weaker test than being in a small cluster --- a pair of fractures that
+        meet only each other have counts of one --- so prefer
+        `getFxMaskConnected` for culling.
+        """
+        return np.bincount(
+            self.getFxIntersections(include_coplanar).ravel(),
+            minlength=len(self._fx))
+
+    def getFxAdjacency(self, include_coplanar=False, form='full'):
+        """Return the fracture intersection graph as a sparse adjacency matrix
+
+        The matrix is (N,N), boolean, and has no diagonal: entry (i,j) is
+        `True` where fractures i and j intersect. It is a
+        `scipy.sparse.csr_array`, and so needs `scipy`, unlike the rest of this
+        module; `getFxIntersections` gives the same information as a pair list
+        without that.
+
+        CSR indexes by row, so `a[[i]].indices` is every fracture that fracture
+        i meets --- but only in the `'full'` form. An intersection is one fact
+        about two fractures, and a triangular form records it against just one
+        of them, which halves the storage at the cost of that lookup: in
+        `'lower'`, fracture i's row holds only the fractures before it that it
+        meets, and finding the rest means searching the column, which CSR is
+        not laid out for. Prefer `'full'` unless the network is big enough for
+        the storage to matter, and see `scipy.sparse.csgraph`, whose routines
+        take either form given `directed=False`.
+
+        Parameters
+        ----------
+        include_coplanar : bool
+            As `OFracArray.intersection_pairs` takes it.
+        form : str
+            `'full'`, the default, for the symmetric matrix holding both (i,j)
+            and (j,i); `'lower'` for the strictly lower triangular matrix,
+            holding each intersection once, at (j,i) with i < j.
+        """
+        from scipy.sparse import coo_array
+
+        if form not in ('full', 'lower'):
+            raise ValueError(
+                f'Cannot interpret "{form}" as an adjacency matrix form; '
+                'use "full" or "lower"')
+
+        pairs = self.getFxIntersections(include_coplanar)
+        n = len(self._fx)
+
+        # pairs are (i,j) with i < j, which is the upper triangle
+        (i, j) = (pairs[:, 0], pairs[:, 1])
+        if form == 'full':
+            (rows, cols) = (np.concatenate((i, j)), np.concatenate((j, i)))
+        else:
+            (rows, cols) = (j, i)
+
+        return coo_array((np.ones(len(rows), dtype=bool), (rows, cols)),
+            shape=(n, n)).tocsr()
+
+    def getFxClusterLabels(self, include_coplanar=False):
+        """Return an (N,) `numpy.array` of each fracture's cluster number
+
+        Fractures sharing a number are connected to one another, directly or
+        through other fractures. Clusters are numbered from the largest down,
+        so cluster 0 is the biggest one in the network and `labels == 0` masks
+        it; a fracture connected to nothing is a cluster of its own.
+        """
+        return _label_components(len(self._fx),
+            self.getFxIntersections(include_coplanar))
+
+    def getFxClusterSizes(self, labels=None, include_coplanar=False):
+        """Return an array of the number of fractures in each cluster
+
+        Entry `k` is the size of cluster `k` as `getFxClusterLabels` numbers
+        them, so the array descends. Pass `labels` to reuse labels already
+        computed.
+        """
+        if labels is None:
+            labels = self.getFxClusterLabels(include_coplanar)
+
+        return np.bincount(labels) if len(labels) \
+            else np.zeros(0, dtype=np.intp)
+
+    def getFxMaskConnected(self, min_cluster_size=2, labels=None,
+            include_coplanar=False):
+        """Return a mask of the fractures in a cluster of at least this size
+
+        This is the filter for fractures that are not part of the network:
+        `~grid.getFxMaskConnected()` masks the fractures that intersect nothing,
+        and `subsetFx(grid.getFxMaskConnected())` is the network without them.
+        Raising `min_cluster_size` also drops the small islands of fractures
+        that meet each other but nothing else.
+
+        Note that a large cluster can still be isolated from wherever flow
+        enters the domain; `getFxMaskConnectedTo` tests that instead.
+
+        Parameters
+        ----------
+        min_cluster_size : int
+            The smallest cluster to keep. The default, 2, keeps every fracture
+            that intersects at least one other.
+        labels : array-like or `None`
+            Cluster labels from `getFxClusterLabels`, if already computed.
+        """
+        if labels is None:
+            labels = self.getFxClusterLabels(include_coplanar)
+
+        if not len(labels):
+            return np.zeros(0, dtype=bool)
+
+        return self.getFxClusterSizes(labels)[labels] >= min_cluster_size
+
+    def getFxMaskConnectedTo(self, seeds, labels=None, include_coplanar=False):
+        """Return a mask of the fractures reachable from the `seeds` fractures
+
+        Every fracture in a cluster that holds at least one seed is selected,
+        including the seeds themselves. Seeds are usually themselves a mask ---
+        the fractures meeting an inlet face, say, from `getFxMaskIn` --- which
+        makes this the test of what the flow field can actually reach:
+
+            inlet = grid.getFxMaskIn((0, -DINF, -DINF), (0, DINF, DINF))
+            live = grid.subsetFx(grid.getFxMaskConnectedTo(inlet))
+
+        Parameters
+        ----------
+        seeds : array-like
+            A boolean mask over this network's fractures, or an array of
+            fracture indices.
+        labels : array-like or `None`
+            Cluster labels from `getFxClusterLabels`, if already computed.
+        """
+        if labels is None:
+            labels = self.getFxClusterLabels(include_coplanar)
+
+        if not len(labels):
+            return np.zeros(0, dtype=bool)
+
+        # index or mask; either selects the seeded rows
+        seeded = np.zeros(len(labels), dtype=bool)
+        seeded[seeds] = True
+
+        return np.isin(labels, np.unique(labels[seeded]))
 
     def subsetFx(self, which):
         """Return a new `OFracGrid` holding a copy of the chosen fractures

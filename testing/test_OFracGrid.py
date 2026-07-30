@@ -4,12 +4,15 @@ WARNING. VERY INCOMPLETE IN TERMS OF COVERAGE OF TESTS.
 """
 
 import unittest
+import unittest.mock
 import itertools
 import pickle
+import warnings
 from decimal import Decimal
 
 import numpy as np
 
+from ofrac import ofracs
 from ofrac.ofracs import (OFrac, OFracArray, OFracGrid, as_nudge_triple)
 from ofrac.ofracs import (CO_SCALE, AP_SCALE, STORE_DTYPE,
         _co2i, _i2co, _ap2i, _i2ap)
@@ -833,3 +836,199 @@ class TestAnisotropicNudging(unittest.TestCase):
         b.nudgeAll([0.1, 0.1, 0.1])
         self.assertEqual([tuple(f.d) for f in a.iterFracs()],
                          [tuple(f.d) for f in b.iterFracs()])
+
+
+class TestConnectivity(unittest.TestCase):
+    """Fracture intersections, the graph they form, and its clusters.
+
+    A fracture conducts into another only where the two meet, so the connected
+    components of the intersection graph are what a filter for "fractures that
+    are not part of the network" has to be built on.
+    """
+
+    def _net(self):
+        """Three clusters: {0,1,2} crossing, {3,4} crossing, and a lone 5"""
+        return OFracGrid(domainSize=(10., 10., 10.), fx=[
+            (0., 5., 0., 5., 2., 2., 1e-4),   # 0: perp z, at z=2
+            (1., 1., 0., 5., 0., 5., 1e-4),   # 1: perp x, crosses 0
+            (0., 5., 3., 3., 2., 6., 1e-4),   # 2: perp y, lands on 0, crosses 1
+            (8., 9., 8., 9., 7., 7., 1e-4),   # 3: perp z
+            (8.5, 8.5, 8., 9., 6., 8., 1e-4), # 4: perp x, crosses 3
+            (0., 1., 9., 9., 0., 1., 1e-4),   # 5: perp y, meets nothing
+        ])
+
+    def test_intersections(self):
+        p = self._net().getFxIntersections()
+        self.assertEqual(p.tolist(), [[0, 1], [0, 2], [1, 2], [3, 4]])
+
+    def test_a_fracture_landing_on_another_counts(self):
+        # fracture 2 terminates on fracture 0's plane rather than crossing it,
+        # which is how an orthogonal network is usually generated
+        self.assertIn([0, 2], self._net().getFxIntersections().tolist())
+
+    def test_same_orientation_never_intersects(self):
+        # two z-normal fractures in one plane, sharing an edge
+        g = OFracGrid(domainSize=(10., 10., 10.), fx=[
+            (0., 5., 0., 5., 2., 2., 1e-4),
+            (5., 9., 0., 5., 2., 2., 1e-4)])
+
+        self.assertEqual(len(g.getFxIntersections()), 0)
+        self.assertEqual(g.getFxIntersections(include_coplanar=True).tolist(),
+            [[0, 1]])
+
+    def test_intersection_counts(self):
+        self.assertEqual(self._net().getFxIntersectionCounts().tolist(),
+            [2, 2, 2, 1, 1, 0])
+
+    def test_cluster_labels_are_biggest_first(self):
+        g = self._net()
+        self.assertEqual(g.getFxClusterLabels().tolist(), [0, 0, 0, 1, 1, 2])
+        self.assertEqual(g.getFxClusterSizes().tolist(), [3, 2, 1])
+
+    def test_mask_connected_drops_the_lone_fracture(self):
+        g = self._net()
+        self.assertEqual(g.getFxMaskConnected().tolist(),
+            [True]*5 + [False])
+        self.assertEqual(g.getFxMaskConnected(min_cluster_size=3).tolist(),
+            [True]*3 + [False]*3)
+
+    def test_subsetting_by_connectedness(self):
+        g = self._net()
+        sub = g.subsetFx(g.getFxMaskConnected())
+        self.assertEqual(sub.getFxCount(), 5)
+        self.assertEqual(len(sub.getFxIntersections()), 4)
+
+    def test_mask_connected_to_seeds(self):
+        g = self._net()
+        # everything reachable from the fractures in the first cluster's corner
+        seed = g.getFxMaskIn((1., 0., 0.), (1., 5., 5.))
+        self.assertEqual(g.getFxMaskConnectedTo(seed).tolist(),
+            [True]*3 + [False]*3)
+
+    def test_mask_connected_to_accepts_indices(self):
+        g = self._net()
+        self.assertEqual(g.getFxMaskConnectedTo([3]).tolist(),
+            [False]*3 + [True]*2 + [False])
+
+    def test_adjacency_matrix(self):
+        a = self._net().getFxAdjacency().toarray()
+
+        self.assertEqual(a.shape, (6, 6))
+        np.testing.assert_array_equal(a, a.T)
+        self.assertEqual(a.diagonal().sum(), 0, 'no fracture meets itself')
+        self.assertEqual(a[0].tolist(),
+            [False, True, True, False, False, False])
+        self.assertEqual(a[5].sum(), 0)
+
+    def test_blocking_does_not_change_the_answer(self):
+        g = self._net()
+        # a block size of one pair forces the widest possible chunking
+        np.testing.assert_array_equal(
+            g._fx.intersection_pairs(max_block=1), g.getFxIntersections())
+
+    def test_empty_network(self):
+        g = OFracGrid(domainSize=(1., 1., 1.), fx=[])
+
+        self.assertEqual(g.getFxIntersections().shape, (0, 2))
+        self.assertEqual(g.getFxClusterLabels().tolist(), [])
+        self.assertEqual(g.getFxClusterSizes().tolist(), [])
+        self.assertEqual(g.getFxMaskConnected().tolist(), [])
+        self.assertEqual(g.getFxMaskConnectedTo([]).tolist(), [])
+
+    def test_agrees_with_pairwise_comparison(self):
+        """The vectorized sweep must match a plain loop over every pair"""
+        rng = np.random.default_rng(11)
+        fx = []
+        while len(fx) < 150:
+            p = int(rng.integers(0, 3))
+            c = np.round(rng.uniform(0., 20., 3), 3)
+            d = []
+            for a in range(3):
+                if a == p:
+                    d += [c[a], c[a]]
+                else:
+                    d += [c[a], min(20., c[a]+round(rng.uniform(.5, 6.), 3))]
+            if all(d[2*a+1]-d[2*a] >= 0.001 for a in range(3) if a != p):
+                fx.append(tuple(d)+(1e-4,))
+
+        g = OFracGrid(domainSize=(20., 20., 20.), fx=fx)
+        d = g._fx.coords
+        perp = g._fx.perp_axes
+
+        expect = [[i, j]
+            for i, j in itertools.combinations(range(len(d)), 2)
+            if perp[i] != perp[j]
+                and all(d[i][2*a] <= d[j][2*a+1] and d[j][2*a] <= d[i][2*a+1]
+                    for a in range(3))]
+
+        self.assertTrue(expect, 'the sample network must have intersections')
+        self.assertEqual(g.getFxIntersections().tolist(), expect)
+
+    def test_adjacency_lower_triangle(self):
+        g = self._net()
+        (full, low) = (g.getFxAdjacency().toarray(),
+            g.getFxAdjacency(form='lower').toarray())
+
+        self.assertEqual(low.sum(), len(g.getFxIntersections()),
+            'each intersection is recorded once')
+        self.assertEqual(low.sum()*2, full.sum())
+        np.testing.assert_array_equal(low, np.tril(full, -1))
+        # the pair (0,2) is held against the later fracture
+        self.assertTrue(low[2, 0])
+        self.assertFalse(low[0, 2])
+
+    def test_adjacency_rejects_an_unknown_form(self):
+        with self.assertRaises(ValueError):
+            self._net().getFxAdjacency(form='diagonal')
+
+    def test_either_form_gives_the_same_components(self):
+        from scipy.sparse.csgraph import connected_components
+        g = self._net()
+        counts = set(connected_components(
+                g.getFxAdjacency(form=f), directed=False)[0]
+            for f in ('full', 'lower'))
+        self.assertEqual(counts, {3})
+
+
+class TestLargeNetworkWarning(unittest.TestCase):
+    """A quadratic search over a big network should say so."""
+
+    def _net(self, n):
+        # n parallel fractures: no intersections, but every pair is compared
+        return OFracGrid(domainSize=(1., 1., float(n)), fx=[
+            (0., 1., 0., 1., float(k), float(k), 1e-4) for k in range(n)])
+
+    def test_warns_above_the_threshold(self):
+        g = self._net(40)
+        with unittest.mock.patch.object(ofracs, 'LARGE_NETWORK', 10):
+            with self.assertWarns(ofracs.LargeNetworkWarning) as w:
+                g.getFxIntersections()
+        self.assertIn('Sorting', str(w.warning),
+            'the warning should say what to implement')
+
+    def test_quiet_below_the_threshold(self):
+        g = self._net(40)
+        with unittest.mock.patch.object(ofracs, 'LARGE_NETWORK', 100):
+            with warnings.catch_warnings():
+                warnings.simplefilter('error')
+                g.getFxIntersections()
+
+    def test_none_silences_it(self):
+        g = self._net(40)
+        with unittest.mock.patch.object(ofracs, 'LARGE_NETWORK', None):
+            with warnings.catch_warnings():
+                warnings.simplefilter('error')
+                g.getFxIntersections()
+
+    def test_warns_through_every_entry_point(self):
+        g = self._net(40)
+        for call in (lambda: g.getFxIntersections(),
+                     lambda: g.getFxAdjacency(),
+                     lambda: g.getFxMaskConnected(),
+                     lambda: g._fx.intersection_pairs()):
+            with self.subTest(call=call):
+                with unittest.mock.patch.object(ofracs, 'LARGE_NETWORK', 10):
+                    with self.assertWarns(ofracs.LargeNetworkWarning) as w:
+                        call()
+                # the reminder must name the caller's line, not the library's
+                self.assertEqual(w.filename, __file__)
