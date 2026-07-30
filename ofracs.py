@@ -2163,6 +2163,64 @@ class OFracGrid():
 
         return np.isin(labels, np.unique(labels[seeded]))
 
+    def test_percolation(self, bnd=6*[False,]):
+        """Test whether the network percolates across the requested boundaries
+
+        The network percolates when some cluster of fractures spans every
+        boundary face flagged `True` in `bnd` --- when there is an undirected
+        graph path, through fracture intersections, connecting all of them.
+
+        Parameters
+        ----------
+        bnd : list-like of 6 bool
+            Flags, in order, for the xmin, xmax, ymin, ymax, zmin, zmax faces
+            of the domain (see `getDomainStart`/`getDomainEnd`). Faces left
+            `False` do not need to participate.
+
+        Returns
+        -------
+        bool
+            `True` if fewer than two faces are flagged (there is nothing to
+            connect), or if some cluster reaches every flagged face; `False`
+            if any flagged face has no fracture on it, or the flagged faces
+            fall in different clusters.
+        """
+        if len(bnd) != 6:
+            raise ValueError('bnd must have exactly 6 entries')
+
+        requested = [i for i, f in enumerate(bnd) if f]
+        if len(requested) < 2:
+            return True
+
+        start = list(self.getDomainStart())
+        end = list(self.getDomainEnd())
+        # (axis, coordinate) for xmin, xmax, ymin, ymax, zmin, zmax, in order
+        faces = (
+            (0, start[0]), (0, end[0]),
+            (1, start[1]), (1, end[1]),
+            (2, start[2]), (2, end[2]),
+        )
+
+        labels = self.getFxClusterLabels()
+
+        common = None
+        for i in requested:
+            (axis, coord) = faces[i]
+            box_start = [-DINF, -DINF, -DINF]
+            box_end = [DINF, DINF, DINF]
+            box_start[axis] = box_end[axis] = coord
+
+            mask = self.getFxMaskIn(tuple(box_start), tuple(box_end))
+            face_labels = set(np.unique(labels[mask])) if mask.any() else set()
+            if not face_labels:
+                return False
+
+            common = face_labels if common is None else common & face_labels
+            if not common:
+                return False
+
+        return True
+
     def subsetFx(self, which):
         """Return a new `OFracGrid` holding a copy of the chosen fractures
 

@@ -926,6 +926,33 @@ class TestConnectivity(unittest.TestCase):
         np.testing.assert_array_equal(
             g._fx.intersection_pairs(max_block=1), g.getFxIntersections())
 
+    def test_percolation_across_a_spanning_cluster(self):
+        g = self._net()
+        # cluster {0,1,2} reaches xmin (frac 0/1), ymin (frac 0/1) and zmin
+        # (frac 1), but none of the max faces
+        self.assertTrue(g.test_percolation(
+            [True, False, True, False, False, False]))
+        self.assertTrue(g.test_percolation(
+            [True, False, False, False, True, False]))
+        self.assertFalse(g.test_percolation(
+            [False, True, False, True, False, False]))
+        self.assertFalse(g.test_percolation(
+            [True, True, False, False, False, False]))
+
+    def test_percolation_needs_two_faces(self):
+        g = self._net()
+        self.assertTrue(g.test_percolation([True, False, False, False, False, False]))
+        self.assertTrue(g.test_percolation([False]*6))
+
+    def test_percolation_rejects_wrong_length(self):
+        with self.assertRaises(ValueError):
+            self._net().test_percolation([True]*5)
+
+    def test_percolation_of_empty_network(self):
+        g = OFracGrid(domainSize=(1., 1., 1.), fx=[])
+        self.assertFalse(g.test_percolation(
+            [True, False, True, False, False, False]))
+
     def test_empty_network(self):
         g = OFracGrid(domainSize=(1., 1., 1.), fx=[])
 
