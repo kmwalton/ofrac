@@ -2079,16 +2079,53 @@ class OFracGrid():
         return coo_array((np.ones(len(rows), dtype=bool), (rows, cols)),
             shape=(n, n)).tocsr()
 
-    def getFxClusterLabels(self, include_coplanar=False):
+    def getFxClusterLabels(self, include_coplanar=False, mask=None,
+            pairs=None):
         """Return an (N,) `numpy.array` of each fracture's cluster number
 
         Fractures sharing a number are connected to one another, directly or
         through other fractures. Clusters are numbered from the largest down,
         so cluster 0 is the biggest one in the network and `labels == 0` masks
         it; a fracture connected to nothing is a cluster of its own.
+
+        Parameters
+        ----------
+        include_coplanar : bool
+            As `getFxIntersections` takes it. Ignored if `pairs` is given.
+        mask : array-like or `None`
+            A boolean mask (or fracture indices) restricting the graph to a
+            subset of this network's fractures --- e.g. those reaching a
+            subzone, from `getFxMaskIn`. Edges touching an excluded fracture
+            are dropped, so a fracture outside `mask` cannot bridge two
+            fractures inside it; fractures outside `mask` still get a label
+            (each its own singleton, unless two of them happen to be
+            entirely unreachable through `mask` and share none of its
+            edges), but callers restricting to a subset should also mask the
+            fractures they read `labels` back for. Default: every fracture.
+        pairs : (M,2) array-like or `None`
+            Precomputed intersection pairs from `getFxIntersections`, to
+            reuse the same geometric sweep across many `mask`/subzone calls
+            instead of recomputing it each time. Must have been computed with
+            the same `include_coplanar` the caller cares about. Default:
+            computed fresh from this network.
         """
-        return _label_components(len(self._fx),
-            self.getFxIntersections(include_coplanar))
+        n = len(self._fx)
+
+        if pairs is None:
+            pairs = self.getFxIntersections(include_coplanar)
+
+        if mask is not None and len(pairs):
+            keep = self._maskToBool(mask)
+            pairs = pairs[keep[pairs[:, 0]] & keep[pairs[:, 1]]]
+
+        return _label_components(n, pairs)
+
+    def _maskToBool(self, mask):
+        """Return `mask` --- a boolean mask or an array of indices --- as an
+        (N,) boolean `numpy.array` over this network's fractures."""
+        m = np.zeros(len(self._fx), dtype=bool)
+        m[mask] = True
+        return m
 
     def getFxClusterSizes(self, labels=None, include_coplanar=False):
         """Return an array of the number of fractures in each cluster
@@ -2163,7 +2200,8 @@ class OFracGrid():
 
         return np.isin(labels, np.unique(labels[seeded]))
 
-    def test_percolation(self, bnd=6*[False,]):
+    def test_percolation(self, bnd=6*[False,], mask=None, pairs=None,
+            start=None, end=None):
         """Test whether the network percolates across the requested boundaries
 
         The network percolates when some cluster of fractures spans every
@@ -2174,8 +2212,24 @@ class OFracGrid():
         ----------
         bnd : list-like of 6 bool
             Flags, in order, for the xmin, xmax, ymin, ymax, zmin, zmax faces
-            of the domain (see `getDomainStart`/`getDomainEnd`). Faces left
-            `False` do not need to participate.
+            of the domain (see `getDomainStart`/`getDomainEnd`, and `start`,
+            `end` below). Faces left `False` do not need to participate.
+        mask : array-like or `None`
+            A boolean mask (or fracture indices) restricting the test to a
+            subset of this network's fractures --- e.g. those reaching a
+            subzone, from `getFxMaskIn`. Only paths through fractures in
+            `mask` count; fractures outside it may neither participate nor
+            bridge two that are in it. Default: every fracture.
+        pairs : (M,2) array-like or `None`
+            Precomputed intersection pairs from `getFxIntersections`, to
+            reuse the same geometric sweep across many `mask`/subzone tests
+            of this network instead of recomputing it each time. Default:
+            computed fresh.
+        start, end : (3,) array-like or `None`
+            Override the domain corners the boundary faces are measured
+            from --- e.g. a subzone's own box, when testing percolation
+            within just that subzone via `mask`, rather than this network's
+            whole domain. Both default to `getDomainStart`/`getDomainEnd`.
 
         Returns
         -------
@@ -2192,8 +2246,8 @@ class OFracGrid():
         if len(requested) < 2:
             return True
 
-        start = list(self.getDomainStart())
-        end = list(self.getDomainEnd())
+        start = list(self.getDomainStart()) if start is None else list(start)
+        end = list(self.getDomainEnd()) if end is None else list(end)
         # (axis, coordinate) for xmin, xmax, ymin, ymax, zmin, zmax, in order
         faces = (
             (0, start[0]), (0, end[0]),
@@ -2201,7 +2255,8 @@ class OFracGrid():
             (2, start[2]), (2, end[2]),
         )
 
-        labels = self.getFxClusterLabels()
+        labels = self.getFxClusterLabels(mask=mask, pairs=pairs)
+        restrict = None if mask is None else self._maskToBool(mask)
 
         common = None
         for i in requested:
@@ -2210,8 +2265,12 @@ class OFracGrid():
             box_end = [DINF, DINF, DINF]
             box_start[axis] = box_end[axis] = coord
 
-            mask = self.getFxMaskIn(tuple(box_start), tuple(box_end))
-            face_labels = set(np.unique(labels[mask])) if mask.any() else set()
+            face_mask = self.getFxMaskIn(tuple(box_start), tuple(box_end))
+            if restrict is not None:
+                face_mask = face_mask & restrict
+
+            face_labels = set(np.unique(labels[face_mask])) \
+                if face_mask.any() else set()
             if not face_labels:
                 return False
 

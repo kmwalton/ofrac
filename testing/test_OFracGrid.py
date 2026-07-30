@@ -953,6 +953,68 @@ class TestConnectivity(unittest.TestCase):
         self.assertFalse(g.test_percolation(
             [True, False, True, False, False, False]))
 
+    def _chain_net(self):
+        """A-B-C chain: 0 meets 1, 1 meets 2, but 0 and 2 never meet
+
+        So excluding 1 from the graph splits 0 and 2 into separate clusters,
+        even though they are one cluster in the whole network. Fracture 0
+        alone reaches xmin; fracture 2 alone reaches zmax.
+        """
+        return OFracGrid(domainSize=(10., 10., 10.), fx=[
+            (0., 3., 0., 3., 2., 2., 1e-4),   # 0: perp z at z=2
+            (3., 3., 0., 3., 0., 6., 1e-4),   # 1: perp x at x=3, crosses 0
+            (2., 8., 3., 3., 3., 10., 1e-4),  # 2: perp y at y=3, crosses 1 only
+        ])
+
+    def test_cluster_labels_masked_drops_edges_through_excluded_fractures(self):
+        g = self._chain_net()
+        self.assertEqual(g.getFxClusterLabels().tolist(), [0, 0, 0])
+
+        mask = np.array([True, False, True])
+        labels = g.getFxClusterLabels(mask=mask)
+        # 0 and 2 no longer share a label once the bridging fracture 1 is
+        # excluded from the graph
+        self.assertNotEqual(labels[0], labels[2])
+
+    def test_cluster_labels_reuse_precomputed_pairs(self):
+        g = self._chain_net()
+        pairs = g.getFxIntersections()
+        mask = np.array([True, False, True])
+
+        # passing the pairs already computed must agree with recomputing them
+        self.assertEqual(
+            g.getFxClusterLabels(mask=mask, pairs=pairs).tolist(),
+            g.getFxClusterLabels(mask=mask).tolist())
+
+    def test_percolation_with_mask_excludes_bridging_fractures(self):
+        g = self._chain_net()
+        pairs = g.getFxIntersections()
+        mask = np.array([True, False, True])  # drop the bridge, fracture 1
+
+        # unmasked, all three fractures are one cluster, so xmin (fracture 0
+        # alone) and zmax (fracture 2 alone) percolate together, via 1
+        self.assertTrue(g.test_percolation(
+            [True, False, False, False, False, True]))
+
+        # masked (bridge excluded), fractures 0 and 2 are separate clusters,
+        # so the same two faces no longer share one
+        self.assertFalse(g.test_percolation(
+            [True, False, False, False, False, True], mask=mask, pairs=pairs))
+
+    def test_percolation_domain_override_uses_a_subzone_box(self):
+        g = self._chain_net()
+        # a subzone box around just fracture 1's own extent: x=3, y0-3, z0-6
+        mask = np.array([False, True, False])
+
+        self.assertTrue(g.test_percolation(
+            [False, False, True, True, False, False],
+            mask=mask, start=(3., 0., 0.), end=(3., 3., 6.)))
+
+        # the same faces, measured against the whole network's domain
+        # instead, do not both touch fracture 1 (ymax there is 10, not 3)
+        self.assertFalse(g.test_percolation(
+            [False, False, True, True, False, False], mask=mask))
+
     def test_empty_network(self):
         g = OFracGrid(domainSize=(1., 1., 1.), fx=[])
 
