@@ -15,6 +15,7 @@ retain RFGen's raw text output as <name>.rfd next to the pickle.
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -24,22 +25,126 @@ from multiprocessing import Pool
 from ofrac import ofracs
 
 
-DEFAULT_RFGEN_EXE_NAME = 'rfgen.1436.exe'
-"""RFGen executable used when neither --exe nor $RFGEN_EXE_NAME is set."""
+FALLBACK_RFGEN_EXE_NAME = 'rfgen.1436.exe'
+"""Used only when the PATH scan finds no RFGen at all."""
 
 RFGEN_OUT_FN = 'Report-Rfgen.txt'
 """The statically named DFN output that RFGen writes to its working dir."""
 
+RFGEN_EXE_RE = re.compile(
+    r'^rfgen'
+    r'(?:[._-](?P<version>\d+(?:[._]\d+)*[a-z]*))?'
+    r'(?P<ext>\.[^.]+)?$',
+    re.IGNORECASE)
+"""Matches 'rfgen.exe', 'rfgen.1436.exe', 'rfgen-1.2.3b', ... but not
+'RFGen_help.1432b.txt', whose extension is rejected separately."""
+
+
+def _version_key(version):
+    """Sort key ordering RFGen version codes, lowest first.
+
+    '1436' > '1432b' > '1432' > '1388', and an unversioned name sorts below
+    every versioned one, since it carries no claim to being newer.
+    """
+    if not version:
+        return ((-1,), '')
+    m = re.match(r'^(?P<nums>\d+(?:[._]\d+)*)(?P<suffix>[a-z]*)$',
+        version, re.IGNORECASE)
+    nums = tuple(int(n) for n in re.split(r'[._]', m.group('nums')))
+    return (nums, m.group('suffix').lower())
+
+
+def _is_executable(path):
+    """True if `path` looks runnable: a PATHEXT extension, or the x bit."""
+    exts = [e.lower() for e in
+        os.environ.get('PATHEXT', '').split(os.pathsep) if e]
+    ext = os.path.splitext(path)[1].lower()
+    if exts:
+        return ext in exts
+    return os.access(path, os.X_OK)
+
+
+def scan_path_for_rfgen():
+    """Find every RFGen-looking executable on $PATH.
+
+    Returns a list of `(directory, candidates)` pairs in PATH order, where
+    `candidates` is that directory's matches sorted newest version first as
+    `(version string or None, file name)`.  Directories with no match are
+    omitted, as are duplicate directories (PATH may repeat them).
+    """
+    found = []
+    seen_dirs = set()
+
+    for d in os.environ.get('PATH', '').split(os.pathsep):
+        if not d:
+            continue
+        key = os.path.normcase(os.path.abspath(d))
+        if key in seen_dirs or not os.path.isdir(d):
+            continue
+        seen_dirs.add(key)
+
+        try:
+            names = os.listdir(d)
+        except OSError:
+            # unreadable PATH entries are the OS's problem, not ours
+            continue
+
+        cands = []
+        for n in names:
+            m = RFGEN_EXE_RE.match(n)
+            if m and _is_executable(os.path.join(d, n)):
+                cands.append((m.group('version'), n))
+
+        if cands:
+            cands.sort(key=lambda c: _version_key(c[0]), reverse=True)
+            found.append((d, cands))
+
+    return found
+
 
 def find_rfgen_exe(exe=None):
-    """Resolve the RFGen executable.
+    """Resolve the RFGen executable to run.
 
-    Precedence: the --exe value, then $RFGEN_EXE_NAME, then the default.  In
-    all cases the name is passed through shutil.which(), so a bare executable
-    name found on PATH works as well as an explicit path.
+    Precedence: the --exe value, then $RFGEN_EXE_NAME, then the newest
+    version found in the first $PATH component holding any RFGen.  The first
+    two are passed through shutil.which(), so a bare name on PATH works as
+    well as an explicit path.
+
+    Returns `(resolved path or None, requested name, report lines)`, where
+    the report describes what the PATH scan saw.  It is empty when an
+    explicit --exe was given, since nothing was inferred in that case.
     """
-    name = exe or os.environ.get('RFGEN_EXE_NAME', DEFAULT_RFGEN_EXE_NAME)
-    return shutil.which(name), name
+    if exe:
+        return shutil.which(exe), exe, []
+
+    found = scan_path_for_rfgen()
+    newest = os.path.join(found[0][0], found[0][1][0][1]) if found else None
+
+    env_name = os.environ.get('RFGEN_EXE_NAME')
+    if env_name:
+        name, origin = env_name, ' from $RFGEN_EXE_NAME'
+    elif newest:
+        name, origin = newest, ''
+    else:
+        name, origin = FALLBACK_RFGEN_EXE_NAME, ' (no rfgen found on $PATH)'
+
+    resolved = shutil.which(name)
+    _norm = lambda p: os.path.normcase(os.path.abspath(p))
+    chosen = _norm(resolved) if resolved else None
+
+    report = [f'RFGen: using {resolved or name}{origin}']
+
+    if resolved and newest and chosen != _norm(newest):
+        report.append(f'  note: a newer build is on $PATH: {newest}')
+
+    # Everything else the scan turned up, so a stale pick is visible.
+    for i, (d, cands) in enumerate(found):
+        others = [n for _, n in cands if _norm(os.path.join(d, n)) != chosen]
+        if others:
+            label = 'also in' if i == 0 else 'shadowed in'
+            report.append(f'  {label} {d}: ' + ', '.join(others))
+
+    return resolved, name, report
 
 
 def run_one(rfp_fn, rfgen_exe, force=False, keep_rfd=False):
@@ -147,8 +252,10 @@ def build_parser():
         metavar='RFGEN_EXE',
         default=None,
         help=(
-            'RFGen executable to invoke.  Defaults to $RFGEN_EXE_NAME, or '
-            f'{DEFAULT_RFGEN_EXE_NAME} if that is unset.  Resolved on PATH.'))
+            'RFGen executable to invoke.  Defaults to $RFGEN_EXE_NAME, or, '
+            'if that is unset, the highest-versioned rfgen*.exe in the first '
+            '$PATH component containing one.  Unless --exe is given, the '
+            'choice and the alternatives passed over are reported.'))
 
     argp.add_argument('--keep-rfd',
         action='store_true',
@@ -174,7 +281,10 @@ def main():
     if args.nproc < 1:
         argp.error('--nproc must be >= 1')
 
-    rfgen_exe, requested = find_rfgen_exe(args.exe)
+    rfgen_exe, requested, report = find_rfgen_exe(args.exe)
+    for line in report:
+        print(line, file=sys.stderr)
+
     if rfgen_exe is None:
         print(f'error: RFGen executable not found: {requested}',
             file=sys.stderr)
