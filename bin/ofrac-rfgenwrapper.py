@@ -9,8 +9,21 @@ directory, named after the input file with a '.pkl' extension:
 
     ofrac-rfgenwrapper.py fracs_r00.rfp     ->  ./fracs_r00.pkl
 
+Given seeds, it substitutes each one into the .rfp's //random_number_seed
+line and generates the cross product of seeds and inputs, naming each
+pickle after the seed that produced it:
+
+    ofrac-rfgenwrapper.py --nseeds 20 fracs.rfp
+                                            ->  ./fracs_r01.pkl .. _r20.pkl
+    ofrac-rfgenwrapper.py --seed 3 7 42 -- fracs.rfp
+                                            ->  ./fracs_r03.pkl, _r07, _r42
+
+Note the '--': --seed takes a list, so it must be separated from the
+trailing RFP_FILE arguments.
+
 The temporary directory is discarded afterwards; pass --keep-rfd to also
-retain RFGen's raw text output as <name>.rfd next to the pickle.
+retain RFGen's raw text output as <name>.rfd next to the pickle, and
+--keep-rfp to retain the seeded .rfp that produced it.
 """
 
 import argparse
@@ -30,6 +43,58 @@ FALLBACK_RFGEN_EXE_NAME = 'rfgen.1436.exe'
 
 RFGEN_OUT_FN = 'Report-Rfgen.txt'
 """The statically named DFN output that RFGen writes to its working dir."""
+
+SEED_RE = re.compile(
+    r'^[ \t]*[+-]?(?:\d+\.?\d*|\.\d+)[ \t]*//random_number_seed[ \t]*$',
+    re.MULTILINE)
+"""The seed line in an .rfp, e.g. '1                \t//random_number_seed'."""
+
+
+def substitute_seed(text, seed):
+    """Return the .rfp text with its //random_number_seed set to `seed`.
+
+    Raises rather than silently generating a duplicate network if the field
+    is absent or ambiguous -- an unsubstituted .rfp yields N identical
+    "realizations", which is indistinguishable from a working pool
+    downstream.
+    """
+    new, n = SEED_RE.subn(f'{seed} //random_number_seed', text)
+    if n != 1:
+        raise ValueError(f'expected exactly one //random_number_seed line in '
+                         f'the .rfp, found {n}')
+    return new
+
+
+def parse_seed_args(values):
+    """Flatten --seed values, which may be spaced and/or comma separated."""
+    seeds = []
+    for v in values:
+        for tok in re.split(r'[,\s]+', v):
+            if not tok:
+                continue
+            if not re.fullmatch(r'[+-]?\d+', tok):
+                raise ValueError(f'not an integer seed: {tok!r}')
+            seeds.append(int(tok))
+    return seeds
+
+
+def read_seeds_file(path):
+    """Read integer seeds from a file.
+
+    Seeds may be separated by whitespace or commas, one per line or many.
+    Blank lines are ignored, as is anything after a '#', '!' or '//'
+    comment marker, following the .rfp files' own conventions.
+    """
+    with open(path, 'r') as fin:
+        text = fin.read()
+
+    text = re.sub(r'(#|!|//).*', '', text)
+    return parse_seed_args(text.split())
+
+
+def seed_stem(stem, seed, width):
+    """Realization pickle stem: '<stem>_r<seed>', zero padded to `width`."""
+    return f'{stem}_r{seed:0>{width}}'
 
 RFGEN_EXE_RE = re.compile(
     r'^rfgen'
@@ -147,7 +212,8 @@ def find_rfgen_exe(exe=None):
     return resolved, name, report
 
 
-def run_one(rfp_fn, rfgen_exe, force=False, keep_rfd=False):
+def run_one(rfp_fn, rfgen_exe, out_stem=None, seed=None,
+        force=False, keep_rfd=False, keep_rfp=False):
     """Run RFGen on `rfp_fn` and pickle the resulting OFracGrid.
 
     Arguments:
@@ -155,10 +221,17 @@ def run_one(rfp_fn, rfgen_exe, force=False, keep_rfd=False):
             Path to the RFGen input (.rfp) file.
         rfgen_exe : str
             Path to the RFGen executable.
+        out_stem : str or None
+            Base name of the outputs.  Defaults to the input's stem.
+        seed : int or None
+            Substituted into the .rfp's //random_number_seed line.  When
+            None the input is used as it stands.
         force : bool
             Overwrite an existing .pkl instead of skipping the run.
         keep_rfd : bool
-            Also write RFGen's raw text output as <name>.rfd.
+            Also write RFGen's raw text output as <out_stem>.rfd.
+        keep_rfp : bool
+            Also write the seeded input as <out_stem>.rfp.
 
     Returns a tuple of `(return code, status string, message)`
     where
@@ -167,9 +240,11 @@ def run_one(rfp_fn, rfgen_exe, force=False, keep_rfd=False):
     """
 
     out_dir = os.getcwd()
-    stem = os.path.splitext(os.path.basename(rfp_fn))[0]
-    pkl_path = os.path.join(out_dir, stem + '.pkl')
-    rfd_path = os.path.join(out_dir, stem + '.rfd')
+    if out_stem is None:
+        out_stem = os.path.splitext(os.path.basename(rfp_fn))[0]
+    pkl_path = os.path.join(out_dir, out_stem + '.pkl')
+    rfd_path = os.path.join(out_dir, out_stem + '.rfd')
+    rfp_out_path = os.path.join(out_dir, out_stem + '.rfp')
 
     if not os.path.isfile(rfp_fn):
         return (1, 'error', f'No such input file: {rfp_fn}')
@@ -192,7 +267,19 @@ def run_one(rfp_fn, rfgen_exe, force=False, keep_rfd=False):
         # RFGen resolves relative paths in the .rfp against its working
         # directory, so give it a local copy under its original name.
         local_rfp_fn = os.path.basename(rfp_path)
-        shutil.copy(rfp_path, local_rfp_fn)
+        if seed is None:
+            shutil.copy(rfp_path, local_rfp_fn)
+        else:
+            try:
+                with open(rfp_path, 'r') as fin:
+                    text = substitute_seed(fin.read(), seed)
+            except (OSError, ValueError) as exc:
+                return (1, 'error',
+                    f'Could not seed {os.path.basename(rfp_fn)}: {exc}')
+            with open(local_rfp_fn, 'w') as fout:
+                fout.write(text)
+            if keep_rfp:
+                shutil.copy(local_rfp_fn, rfp_out_path)
 
         cp = subprocess.run(
                 [rfgen_exe, local_rfp_fn, ],
@@ -226,8 +313,10 @@ def run_one(rfp_fn, rfgen_exe, force=False, keep_rfd=False):
         os.chdir(orig_wd)
 
     msg = f'Created: {os.path.basename(pkl_path)} ({grid.getFxCount()} fractures)'
-    if keep_rfd:
-        msg += f', {os.path.basename(rfd_path)}'
+    for kept, path in ((keep_rfd, rfd_path),
+                       (keep_rfp and seed is not None, rfp_out_path)):
+        if kept:
+            msg += f', {os.path.basename(path)}'
 
     return (0, 'complete', msg)
 
@@ -238,9 +327,33 @@ def build_parser():
             'Run RFGen on each RFP_FILE in a temporary directory, parse the '
             "resulting 'Report-Rfgen.txt' as an OFracGrid, and write it as a "
             'pickle in the current directory named after the input file with '
-            'a .pkl extension.'
+            'a .pkl extension.  Given seeds, every seed is run against every '
+            'input and the pickles are named <stem>_r<seed>.pkl.'
         ),
     )
+
+    seedgrp = argp.add_mutually_exclusive_group()
+
+    seedgrp.add_argument('--seed',
+        metavar='SEED',
+        nargs='+',
+        default=None,
+        help=('Explicit list of integer seeds, space and/or comma separated, '
+              'e.g. --seed 3 7 42 or --seed 3,7,42.  Being greedy, it must '
+              "be separated from the RFP_FILE arguments by '--'."))
+
+    seedgrp.add_argument('--nseeds',
+        metavar='N',
+        type=int,
+        default=None,
+        help='Use the seeds 1..N.')
+
+    seedgrp.add_argument('--fseeds',
+        metavar='SEEDS_FILE',
+        default=None,
+        help=('Read integer seeds from SEEDS_FILE, separated by whitespace '
+              "or commas.  Blank lines are ignored, as is anything after a "
+              "'#', '!' or '//' comment marker."))
 
     argp.add_argument('-p', '--nproc',
         type=int,
@@ -262,16 +375,90 @@ def build_parser():
         help=("Also write RFGen's raw text output as <name>.rfd beside the "
               'pickle (default: discard it with the temporary directory).'))
 
+    argp.add_argument('--keep-rfp',
+        action='store_true',
+        help=('Also write the seeded input as <name>.rfp beside the pickle, '
+              'so a realization can be re-run by hand (seeded runs only).'))
+
     argp.add_argument('-f', '--force',
         action='store_true',
         help='Overwrite an existing <name>.pkl instead of skipping the run.')
 
+    # nargs='*', though at least one is required: a missing RFP_FILE is
+    # usually a greedy --seed having eaten it, and argparse's own "required"
+    # complaint would pre-empt the seed scan that can say so.
     argp.add_argument('rfp_files',
         metavar='RFP_FILE',
-        nargs='+',
+        nargs='*',
         help='One or more RFGen input (.rfp) files.')
 
     return argp
+
+
+def resolve_seeds(args, argp):
+    """Turn the mutually exclusive seed options into a list of seeds.
+
+    Returns an empty list when none were given, meaning the inputs are run
+    exactly as they stand.
+    """
+    if args.nseeds is not None:
+        if args.nseeds < 1:
+            argp.error('--nseeds must be >= 1')
+        return list(range(1, args.nseeds + 1))
+
+    if args.seed is not None:
+        try:
+            seeds = parse_seed_args(args.seed)
+        except ValueError as exc:
+            # Overwhelmingly this is the first RFP_FILE, swallowed by the
+            # greedy --seed, so name the remedy rather than just the rule.
+            argp.error(f'--seed: {exc}: every --seed value must be an '
+                "integer.  Separate the seeds from the RFP_FILE arguments "
+                "with '--', e.g. --seed 3 7 42 -- fracs.rfp")
+        if not seeds:
+            argp.error('--seed: no seeds given')
+        return seeds
+
+    if args.fseeds is not None:
+        try:
+            seeds = read_seeds_file(args.fseeds)
+        except OSError as exc:
+            argp.error(f'--fseeds: {exc}')
+        except ValueError as exc:
+            argp.error(f'--fseeds: {args.fseeds}: {exc}')
+        if not seeds:
+            argp.error(f'--fseeds: no seeds found in {args.fseeds}')
+        return seeds
+
+    return []
+
+
+def build_jobs(rfp_files, seeds, rfgen_exe, force, keep_rfd, keep_rfp):
+    """Expand inputs x seeds into run_one() argument tuples, with labels.
+
+    Ordered seed-major, so the inputs of a realization advance together: if
+    a run is cut short, what is on disk is a set of complete realizations
+    rather than every seed of the first input and none of the last.
+    """
+    stems = [os.path.splitext(os.path.basename(f))[0] for f in rfp_files]
+
+    jobs = []
+    labels = []
+
+    if not seeds:
+        for f, stem in zip(rfp_files, stems):
+            jobs.append((f, rfgen_exe, stem, None, force, keep_rfd, keep_rfp))
+            labels.append(f)
+        return jobs, labels
+
+    width = max(len(str(s)) for s in seeds)
+    for seed in seeds:
+        for f, stem in zip(rfp_files, stems):
+            jobs.append((f, rfgen_exe, seed_stem(stem, seed, width), seed,
+                force, keep_rfd, keep_rfp))
+            labels.append(f'{f} r{seed}')
+
+    return jobs, labels
 
 
 def main():
@@ -280,6 +467,12 @@ def main():
 
     if args.nproc < 1:
         argp.error('--nproc must be >= 1')
+
+    # before the RFP_FILE check: a greedy --seed is the likelier culprit
+    seeds = resolve_seeds(args, argp)
+
+    if not args.rfp_files:
+        argp.error('at least one RFP_FILE is required')
 
     rfgen_exe, requested, report = find_rfgen_exe(args.exe)
     for line in report:
@@ -298,7 +491,12 @@ def main():
         argp.error('input files with duplicate names would write the same '
             'pickle: ' + ', '.join(dupes))
 
-    jobs = [(f, rfgen_exe, args.force, args.keep_rfd) for f in args.rfp_files]
+    jobs, labels = build_jobs(args.rfp_files, seeds, rfgen_exe,
+        args.force, args.keep_rfd, args.keep_rfp)
+
+    if seeds:
+        print(f'RFGen: {len(seeds)} seed(s) x {len(args.rfp_files)} input(s) '
+            f'= {len(jobs)} realization(s)', file=sys.stderr)
 
     if args.nproc > 1 and len(jobs) > 1:
         with Pool(min(args.nproc, len(jobs))) as pool:
@@ -307,9 +505,9 @@ def main():
         results = [run_one(*j) for j in jobs]
 
     exitcode = 0
-    for rfp_fn, (rc, status, msg) in zip(args.rfp_files, results):
+    for label, (rc, status, msg) in zip(labels, results):
         stream = sys.stderr if status == 'error' else sys.stdout
-        print(f'{rfp_fn}: {status}: {msg}', file=stream)
+        print(f'{label}: {status}: {msg}', file=stream)
         if rc != 0:
             exitcode = rc
 
