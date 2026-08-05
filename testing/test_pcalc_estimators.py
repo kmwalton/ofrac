@@ -40,7 +40,7 @@ from ofrac.ofracs import OFrac, OFracGrid  # noqa: E402
 def _load_pcalc():
     """Import the hyphenated script as a module (its CLI is __main__-guarded)."""
     spec = importlib.util.spec_from_file_location(
-        'ofracstats_pcalc', _ROOT / 'ofracstats-pcalc.py')
+        'ofracstats_pcalc', _ROOT / 'bin' / 'ofracstats-pcalc.py')
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod

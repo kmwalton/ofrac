@@ -25,7 +25,7 @@ from ofrac.ofracs import OFracGrid  # noqa: E402
 
 def _load_module(name, filename):
     """Import a hyphenated script as a module (its CLI is __main__-guarded)."""
-    spec = importlib.util.spec_from_file_location(name, _ROOT / filename)
+    spec = importlib.util.spec_from_file_location(name, _ROOT / 'bin' / filename)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod

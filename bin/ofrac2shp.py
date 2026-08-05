@@ -1,4 +1,4 @@
-#!/python
+#!/usr/bin/env python
 """Convert an OFracGrid DFN to real-world coordinates
 
 Parameters for transforming the model coordinate-space DFN to real-world
