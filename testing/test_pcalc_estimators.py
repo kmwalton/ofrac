@@ -1,4 +1,4 @@
-"""Tests for the scan-line/scan-plane placement rules in ofracstats-pcalc.
+"""Tests for the scan-line/scan-plane placement rules in ofracstats_pcalc.
 
 The P-system measures are expectations over a randomly placed probe, so the
 closed-form (`--sampling exact`) results are checked against networks whose
@@ -40,7 +40,7 @@ from ofrac.ofracs import OFrac, OFracGrid  # noqa: E402
 def _load_pcalc():
     """Import the hyphenated script as a module (its CLI is __main__-guarded)."""
     spec = importlib.util.spec_from_file_location(
-        'ofracstats_pcalc', _ROOT / 'bin' / 'ofracstats-pcalc.py')
+        'ofracstats_pcalc', _ROOT / 'bin' / 'ofracstats_pcalc.py')
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod

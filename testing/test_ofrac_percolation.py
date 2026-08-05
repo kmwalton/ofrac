@@ -1,4 +1,4 @@
-"""Tests for the ofrac-percolation CLI tool.
+"""Tests for the ofrac_percolation CLI tool.
 
 Covers the mask-string parsing (the three accepted forms), the per-zone test
 loop that reuses one precomputed intersection sweep across sample zones, and
@@ -31,7 +31,7 @@ def _load_module(name, filename):
     return mod
 
 
-percolation = _load_module('ofrac_percolation', 'ofrac-percolation.py')
+percolation = _load_module('ofrac_percolation', 'ofrac_percolation.py')
 
 
 class TestParseBndMask(unittest.TestCase):
