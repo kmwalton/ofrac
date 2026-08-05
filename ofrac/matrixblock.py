@@ -16,7 +16,7 @@ import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 
-from .. import ofracs
+from . import ofracs
 
 import logging
 logger = logging.getLogger(__name__)

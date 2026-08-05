@@ -16,16 +16,17 @@ from pathlib import Path
 from types import SimpleNamespace
 
 _HERE = Path(__file__).resolve().parent
-_ROOT = _HERE.parent                      # .../libdev/ofrac
-if str(_ROOT.parent) not in sys.path:
-    sys.path.insert(0, str(_ROOT.parent))
+_ROOT = _HERE.parent                      # the repo root, which holds ofrac/
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
 from ofrac.ofracs import OFracGrid  # noqa: E402
 
 
 def _load_module(name, filename):
     """Import a hyphenated script as a module (its CLI is __main__-guarded)."""
-    spec = importlib.util.spec_from_file_location(name, _ROOT / 'bin' / filename)
+    spec = importlib.util.spec_from_file_location(
+        name, _ROOT / 'ofrac' / 'bin' / filename)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod

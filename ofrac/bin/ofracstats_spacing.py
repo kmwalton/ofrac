@@ -19,7 +19,7 @@ from decimal import Decimal
 
 import numpy as np
 from ofrac import ofracs
-from ofrac.ofrac.aabbox import AABBox
+from ofrac.aabbox import AABBox
 
 
 # ---------------------------------------------------------------------------

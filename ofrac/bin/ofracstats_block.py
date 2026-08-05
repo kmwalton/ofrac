@@ -22,7 +22,7 @@ from time import perf_counter
 from itertools import chain
 
 from ofrac.ofracs import numTuple2str as t2s
-from ofrac.ofrac.matrixblock import MatrixBlockOFracGrid, MatrixBlock
+from ofrac.matrixblock import MatrixBlockOFracGrid, MatrixBlock
 
 import logging
 logger = logging.getLogger(__file__)

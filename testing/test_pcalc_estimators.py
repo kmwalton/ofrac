@@ -30,9 +30,9 @@ from pathlib import Path
 import numpy as np
 
 _HERE = Path(__file__).resolve().parent
-_ROOT = _HERE.parent                      # .../libdev/ofrac
-if str(_ROOT.parent) not in sys.path:
-    sys.path.insert(0, str(_ROOT.parent))
+_ROOT = _HERE.parent                      # the repo root, which holds ofrac/
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
 from ofrac.ofracs import OFrac, OFracGrid  # noqa: E402
 
@@ -40,7 +40,7 @@ from ofrac.ofracs import OFrac, OFracGrid  # noqa: E402
 def _load_pcalc():
     """Import the hyphenated script as a module (its CLI is __main__-guarded)."""
     spec = importlib.util.spec_from_file_location(
-        'ofracstats_pcalc', _ROOT / 'bin' / 'ofracstats_pcalc.py')
+        'ofracstats_pcalc', _ROOT / 'ofrac' / 'bin' / 'ofracstats_pcalc.py')
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
