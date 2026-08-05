@@ -1,6 +1,6 @@
 """SpatialZone: a rectangular/box-shaped 3-d region, and its command-line spec.
 
-Shared by the `ofracstats-*.py` and `ofrac*.py` command-line tools, so that
+Shared by the `ofracstats_*.py` and `ofrac*.py` command-line tools, so that
 every tool parses "start/end/size" zone specifications the same way.
 """
 

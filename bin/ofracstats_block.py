@@ -31,7 +31,11 @@ _INFO1 = logging.INFO+1
 
 def process_pstats(dfn):
 
-    pcalc = shutil.which('ofracstats-pcalc.py')
+    # Prefer the current name. The hyphenated one is the deprecated alias,
+    # tried only so that an installation carrying just the old name on PATH
+    # keeps working until that alias is removed.
+    pcalc = (shutil.which('ofracstats_pcalc.py')
+             or shutil.which('ofracstats-pcalc.py'))
 
     if not pcalc:
         return

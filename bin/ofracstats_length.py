@@ -201,7 +201,7 @@ def main(argv=None):
             help='fracture network input files (or fractran prefix)' )
 
 
-    # TODO add sample/sub-sample zones, per ofracstats-pcalc
+    # TODO add sample/sub-sample zones, per ofracstats_pcalc
 
     args = parser.parse_args(argv)
     __VERBOSITY__ = args.verbosity

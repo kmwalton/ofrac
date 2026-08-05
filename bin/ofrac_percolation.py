@@ -24,7 +24,7 @@ The boundary faces to test are given as a mask, in one of three forms:
 SAMPLE ZONES AND DOMAIN
 
 See `-s`/`--sample-zones` and `-d`/`--domain` below; both are parsed the same
-way as in `ofracstats-pcalc.py` (see `ofrac.spatialzone.SpatialZone`). Each
+way as in `ofracstats_pcalc.py` (see `ofrac.spatialzone.SpatialZone`). Each
 sample zone is tested on its own: the network is restricted to the fractures
 that reach into the zone, and the requested faces are measured against the
 zone's own box rather than the whole network's domain. The (comparatively
@@ -198,7 +198,7 @@ def main(argv=None):
     parser.add_argument('-s', '--sample-zones', default=None,
         help="""Regions to test individually (must be rectangle- or
         box-shaped). Separate subzones with ';'. Parsed the same way as
-        `ofracstats-pcalc.py`'s option of the same name, e.g. "(5,5,5)",
+        `ofracstats_pcalc.py`'s option of the same name, e.g. "(5,5,5)",
         "start(0,0,3) end(5,5,4)", "(0,0,3)(5,5,4)", or
         "(5,5,5);(0,0,2.5)si(5,5,2.5)". If omitted, one zone covering the
         whole domain is used.""")

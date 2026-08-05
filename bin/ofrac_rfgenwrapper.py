@@ -7,15 +7,15 @@ each RFGen job inside its own temporary directory, parses that output with
 ofracs.parse(), and writes the OFracGrid as a pickle in the *calling*
 directory, named after the input file with a '.pkl' extension:
 
-    ofrac-rfgenwrapper.py fracs_r00.rfp     ->  ./fracs_r00.pkl
+    ofrac_rfgenwrapper.py fracs_r00.rfp     ->  ./fracs_r00.pkl
 
 Given seeds, it substitutes each one into the .rfp's //random_number_seed
 line and generates the cross product of seeds and inputs, naming each
 pickle after the seed that produced it:
 
-    ofrac-rfgenwrapper.py --nseeds 20 fracs.rfp
+    ofrac_rfgenwrapper.py --nseeds 20 fracs.rfp
                                             ->  ./fracs_r01.pkl .. _r20.pkl
-    ofrac-rfgenwrapper.py --seed 3 7 42 -- fracs.rfp
+    ofrac_rfgenwrapper.py --seed 3 7 42 -- fracs.rfp
                                             ->  ./fracs_r03.pkl, _r07, _r42
 
 Note the '--': --seed takes a list, so it must be separated from the
