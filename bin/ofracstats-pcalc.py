@@ -16,7 +16,7 @@ CURRENTLY IMPLEMENTED MEASURES:
 - P20 : areal fracture density, unbiased counts per square metre
 - P30 : volumetric fracture density, counts per cubic metre
 - P22 : porosity, area of fractures (aperture * length) per unit area sampled
-- P32 : fracture area per unit sampled volume.[Σ(length_1*length_2)]/volume_total
+- P32 : fracture area per unit sampled volume. [sum(length_1*length_2)]/volume_total
 - P33 : porosity, volume of fractures (aperture * length * length) per unit volume sampled
  
 Note: Some sampling bias may be present when using subzones. Subzones contain
