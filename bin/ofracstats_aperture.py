@@ -234,7 +234,11 @@ class Binner:
     def __str__(self):
         return "bins = " + ",".join(str(v) for v in self.bins) + '\n' + str(self.grid)
 
-if __name__ == '__main__':
+def main(argv=None):
+    # __VERBOSITY__ is read by Binner (see the module-level default above), so
+    # the assignment below has to reach the module global, not a local.
+    global __VERBOSITY__, ofracs__VERBOSITY__
+
     parser = argparse.ArgumentParser()
 
     parser.add_argument( '--bins',
@@ -259,7 +263,7 @@ if __name__ == '__main__':
 
     # TODO add sample/sub-sample zones, per ofracstats-pcalc
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     __VERBOSITY__ = args.verbosity
     ofracs__VERBOSITY__ = args.verbosity
 
@@ -280,3 +284,9 @@ if __name__ == '__main__':
     else:
         with open(args.tecplot_out,'w') as fout:
             b.printTecplot(fout)
+
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

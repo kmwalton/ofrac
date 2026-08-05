@@ -148,7 +148,7 @@ def test_zones(fxNet, bnd, dom, sampleZones):
     return results
 
 
-def main(args):
+def run(args):
     fxNets = [parse_dfn(fnin) for fnin in args.FILES]
     fxNet = fxNets[0] if len(fxNets) == 1 else fxNets[0].merge(*fxNets[1:])
 
@@ -181,7 +181,7 @@ def main(args):
     return 0 if allPercolate else 1
 
 
-if __name__ == '__main__':
+def main(argv=None):
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description='Tests whether an orthogonal fracture network percolates '
@@ -215,6 +215,8 @@ if __name__ == '__main__':
         the result: 0 if every zone percolates, 1 if at least one does
         not.""")
 
-    args = parser.parse_args()
+    return run(parser.parse_args(argv))
 
-    sys.exit(main(args))
+
+if __name__ == '__main__':
+    sys.exit(main())

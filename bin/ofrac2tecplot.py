@@ -11,7 +11,7 @@ except ModuleNotFoundError:
     # accommodate "old style" PYTHONPATHing to within this module
     import ofracs
 
-if __name__ == '__main__':
+def main(argv=None):
 
     argp = argparse.ArgumentParser()
 
@@ -25,7 +25,7 @@ if __name__ == '__main__':
         help="Filename for output (or stdout if blank or '-')",
         )
 
-    args = argp.parse_args()
+    args = argp.parse_args(argv)
 
     g = ofracs.parse(args.FILE_IN)
 
@@ -34,4 +34,10 @@ if __name__ == '__main__':
     else:
         with open(args.FILE_OUT,'w') as fout:
             g.printTecplot(fout=fout)
-            
+
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
+

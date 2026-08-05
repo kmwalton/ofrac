@@ -33,7 +33,7 @@ except ModuleNotFoundError:
 _mu = 1.003e-3
 """Viscosity of water, [kg m^-2 s^-1]"""
 
-if __name__ == '__main__':
+def main(argv=None):
 
     argp = argparse.ArgumentParser()
     argp.add_argument('-t', '--transform',
@@ -70,7 +70,7 @@ if __name__ == '__main__':
         help='''Prefix for the output shapefile.''',
     )
 
-    argv = argp.parse_args()
+    argv = argp.parse_args(argv)
 
     # inputs
     dfn = ofracs.parse(argv.DFN_FILE)
@@ -115,3 +115,9 @@ if __name__ == '__main__':
     shpfn = argv.OUT_FILE_PFX+'.shp'
     print(f'Outputting {shpfn}')
     geo_db.to_file(shpfn)
+
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

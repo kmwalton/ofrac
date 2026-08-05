@@ -973,7 +973,12 @@ Sample Zones:
 
 
 
-if __name__ == '__main__':
+def main(argv=None):
+    # Both of these are read all over the module -- __SAMPLING__ is even what
+    # gets handed to the worker pool as initargs -- so they must be set on the
+    # module, not shadowed by locals, exactly as they were at module scope.
+    global __VERBOSITY__, __SAMPLING__
+
     # command line options setup
     parser = argparse.ArgumentParser(
           formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1067,7 +1072,7 @@ if __name__ == '__main__':
     )
 
     # command line args
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     __VERBOSITY__ = args.verbose
 
@@ -1109,6 +1114,10 @@ if __name__ == '__main__':
             doEverything(args)
         except NotValidInputFile as e:
             print(e, file=sys.stderr)
-            sys.exit(1)
+            return 1
 
-    sys.exit(0)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

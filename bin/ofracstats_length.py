@@ -174,7 +174,10 @@ class LengthBinner(OFracBinner):
         return s
 
 
-if __name__ == '__main__':
+def main(argv=None):
+    # Keep the module-level __VERBOSITY__ the thing that gets set, as it was
+    # when this ran at module scope.
+    global __VERBOSITY__
 
     parser = argparse.ArgumentParser()
 
@@ -200,7 +203,7 @@ if __name__ == '__main__':
 
     # TODO add sample/sub-sample zones, per ofracstats-pcalc
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     __VERBOSITY__ = args.verbosity
     ofracs.__VERBOSITY__ = args.verbosity
 
@@ -221,4 +224,8 @@ if __name__ == '__main__':
 
     print(b)
 
-    exit(0)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

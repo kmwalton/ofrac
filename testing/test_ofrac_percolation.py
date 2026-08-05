@@ -2,7 +2,7 @@
 
 Covers the mask-string parsing (the three accepted forms), the per-zone test
 loop that reuses one precomputed intersection sweep across sample zones, and
-the `main()` entry point's text/JSON/quiet output and exit-status contract.
+the `run()` entry point's text/JSON/quiet output and exit-status contract.
 """
 
 import argparse
@@ -157,7 +157,7 @@ class TestMain(unittest.TestCase):
         args = self._args(FILES=['dummy.rfd'])
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            status = percolation.main(args)
+            status = percolation.run(args)
 
         self.assertEqual(status, 0)
         self.assertIn('PERCOLATES', out.getvalue())
@@ -166,7 +166,7 @@ class TestMain(unittest.TestCase):
         args = self._args(FILES=['dummy.rfd'], json=True)
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            status = percolation.main(args)
+            status = percolation.run(args)
 
         self.assertEqual(status, 0)
         data = json.loads(out.getvalue())
@@ -181,7 +181,7 @@ class TestMain(unittest.TestCase):
             sample_zones='start(3,0,3)end(3,1,10)', quiet=True)
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            status = percolation.main(args)
+            status = percolation.run(args)
 
         self.assertEqual(status, 1)
         self.assertEqual(out.getvalue(), '')
@@ -191,7 +191,7 @@ class TestMain(unittest.TestCase):
             sample_zones='(10,10,10);start(3,0,3)end(3,1,10)')
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            status = percolation.main(args)
+            status = percolation.run(args)
 
         self.assertEqual(status, 1)
 

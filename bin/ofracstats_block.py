@@ -10,6 +10,7 @@ Specifically, produces:
 """
 
 import os
+import sys
 import argparse
 import tempfile
 import subprocess
@@ -62,7 +63,7 @@ class BlockHow(argparse.Action):
 
         parser.error(f'Bad value for {option_string}')
 
-if __name__ == '__main__':
+def main(argv=None):
 
     argp = argparse.ArgumentParser()
 
@@ -124,7 +125,7 @@ if __name__ == '__main__':
     argp.add_argument('FILE',
         help='Name of the orthogonal fracture network datafile.')
 
-    args = argp.parse_args()
+    args = argp.parse_args(argv)
 
     if args.verbose:
         liblogger = logging.getLogger('ofrac.matrixblock')
@@ -219,4 +220,10 @@ if __name__ == '__main__':
             logger.info(f'Saved {args.lay_to_jpg} to {fn}.')
         except:
             logger.warning(f'Failed to use {args.lay_to_jpg}.')
+
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
 
