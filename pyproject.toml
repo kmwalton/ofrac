@@ -1,0 +1,73 @@
+[build-system]
+# >=77 for the SPDX `license` string; the TOML-table spelling it replaces is
+# deprecated and stops being supported in Feb 2027.
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ofrac"
+version = "0.1.0"
+description = "Orthogonal discrete FRACture network analysis tools"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+requires-python = ">=3.9"
+
+# No license classifier: those are deprecated in favour of the SPDX string.
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+]
+
+# Imported unconditionally by shipped modules, so they are not optional:
+# numpy and scipy throughout, matplotlib by ofrac.matrixblock, and tabulate
+# by ofracstats_length.
+#
+# Not listed, and not installable from here: `hgstools`, which supplies every
+# parser except the pickle reader. It is not on PyPI. ofracs.populate_parsers
+# means to treat it as optional but re-raises when it is missing outright, so
+# an install without it cannot parse a DFN at all.
+dependencies = [
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "tabulate",
+]
+
+[project.optional-dependencies]
+# Only ofrac2shp needs these, and geopandas drags in a GDAL stack, so they
+# are kept out of the default install.
+shp = [
+    "shapely",
+    "geojson",
+    "geopandas",
+]
+# PyTecplot is licensed separately. ofracstats_block imports it inside a
+# try/except and carries on without it.
+tecplot = [
+    "pytecplot",
+]
+
+[project.urls]
+Homepage = "https://github.com/kmwalton/ofrac"
+
+# Command names keep the hyphens that people already type; the module names
+# behind them cannot, which is what the underscore renames were for.
+[project.scripts]
+ofracstats-aperture = "ofrac.bin.ofracstats_aperture:main"
+ofracstats-block = "ofrac.bin.ofracstats_block:main"
+ofracstats-length = "ofrac.bin.ofracstats_length:main"
+ofracstats-pcalc = "ofrac.bin.ofracstats_pcalc:main"
+ofracstats-spacing = "ofrac.bin.ofracstats_spacing:main"
+ofrac-percolation = "ofrac.bin.ofrac_percolation:main"
+ofrac-rfgenwrapper = "ofrac.bin.ofrac_rfgenwrapper:main"
+ofrac2shp = "ofrac.bin.ofrac2shp:main"
+ofrac2tecplot = "ofrac.bin.ofrac2tecplot:main"
+
+# The package sits in ofrac/ beside this file. Discovery still has to be told
+# to look only there: testing/ carries an __init__.py of its own, so a bare
+# scan finds two top-level packages and refuses to guess between them. Naming
+# ofrac* also keeps the tests out of the distribution, which is where we want
+# them.
+[tool.setuptools.packages.find]
+include = ["ofrac*"]
