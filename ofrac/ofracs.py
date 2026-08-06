@@ -25,6 +25,8 @@ import os
 import pickle
 import decimal
 import copy
+import functools
+import importlib
 from decimal import Decimal,getcontext
 from bisect import bisect_left,bisect_right
 from math import log10,floor,ceil,prod
@@ -38,6 +40,35 @@ __docformat__='numpy'
 _import_warning_strings = []
 """An array of warnining messages about parsers that have not been found."""
 
+_OPTIONAL_IMPORT_ALIASES = frozenset(('pyhgs',))
+"""Names an absent optional dependency may report itself under.
+
+`hgstools` imports its own subpackage flatly in a couple of places, so when it
+is reachable only as `hgstools.pyhgs` the failure names 'pyhgs' rather than
+anything under `hgstools`. Drop this once hgstools uses relative imports.
+"""
+
+
+def _optional_import(modname):
+    """Import an optional parser module, or return None if it is not installed.
+
+    Absence is an expected outcome: not every machine has every simulator's
+    tooling, and the parsers for what is missing are simply left out of the
+    list. A module missing from *inside* the dependency is a different thing --
+    it is installed but broken -- and raises rather than being quietly
+    mistaken for absence.
+    """
+    try:
+        return importlib.import_module(modname)
+    except ModuleNotFoundError as e:
+        missing = e.name or ''
+        if missing in _OPTIONAL_IMPORT_ALIASES \
+                or (modname + '.').startswith(missing + '.'):
+            return None
+        raise
+
+
+@functools.cache
 def populate_parsers():
     """Return a list of OFracGrid parser options.
 
@@ -49,13 +80,8 @@ def populate_parsers():
     #ret = [ OFracGrid.PickleParser, OFracGrid.LegacyUnpickler, ]
     ret = [ OFracGrid.PickleParser, ]
 
-    try:
-        import hgstools.pyhgs.parser.fractran as _hgs_parser_fractran
-    except ModuleNotFoundError as e:
-        if "No module named 'pyhgs'" in str(e):
-            pass
-        elif 'pyhgs.parser.fractran' not in str(e):
-            raise e
+    _hgs_parser_fractran = _optional_import('hgstools.pyhgs.parser.fractran')
+    if _hgs_parser_fractran is None:
         _import_warning_strings.append(
             "Warning: did not find 'pyhgs' or its 'parser_fractran'. "
             +"Cannot parse FRACTRAN-type orthogonal fracture networks."
@@ -63,13 +89,8 @@ def populate_parsers():
     else:
         ret += list(_hgs_parser_fractran.iterFractranParsers())
 
-    try:
-        import hgstools.pyhgs.parser.rfgen as _hgs_parser_rfgen
-    except ModuleNotFoundError as e:
-        if "No module named 'pyhgs'" in str(e):
-            pass
-        elif 'pyhgs.parser.rfgen' not in str(e):
-            raise e
+    _hgs_parser_rfgen = _optional_import('hgstools.pyhgs.parser.rfgen')
+    if _hgs_parser_rfgen is None:
         _import_warning_strings.append(
             "Warning: did not find 'hgstools.pyhgs.parser.parser_rfgen'. "
             +"Cannot parse RFGen-type orthogonal fracture networks."
@@ -80,13 +101,8 @@ def populate_parsers():
             _hgs_parser_rfgen.RFGenFracListParser,
         ]
 
-    try:
-        import hgstools.pyhgs.parser.eco as _hgs_parser_eco
-    except ModuleNotFoundError as e:
-        if "No module named 'pyhgs'" in str(e):
-            pass
-        elif 'pyhgs.parser.eco' not in str(e):
-            raise e
+    _hgs_parser_eco = _optional_import('hgstools.pyhgs.parser.eco')
+    if _hgs_parser_eco is None:
         _import_warning_strings.append(
             "Warning: did not find 'hgstools.pyhgs.parser.eco'. "
             +"Cannot parse HGS+RFGen-style orthogonal fracture networks."
@@ -94,11 +110,8 @@ def populate_parsers():
     else:
         ret += [_hgs_parser_eco.EcoFile,]
 
-    try:
-        import parser_rfgen as _lp
-    except ModuleNotFoundError as e:
-        if 'parser_rfgen' not in str(e):
-            raise e
+    _lp = _optional_import('parser_rfgen')
+    if _lp is None:
         _import_warning_strings.append(
             "Warning: did not find loose module 'parser_rfgen'. "
             +"Cannot parse RFGen-type orthogonal fracture networks."
@@ -109,7 +122,8 @@ def populate_parsers():
         if hasattr(_lp, 'RFGenFracListParser'):
             ret += [_lp.RFGenFracListParser,]
 
-    return ret
+    # a tuple, because the result is cached and shared with every caller
+    return tuple(ret)
 
 def parse(file_name):
     """Return an OFracGrid using any available parser"""

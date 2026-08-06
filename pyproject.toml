@@ -24,9 +24,9 @@ classifiers = [
 # by ofracstats_length.
 #
 # Not listed, and not installable from here: `hgstools`, which supplies every
-# parser except the pickle reader. It is not on PyPI. ofracs.populate_parsers
-# means to treat it as optional but re-raises when it is missing outright, so
-# an install without it cannot parse a DFN at all.
+# parser except the pickle reader, and which is not on PyPI. An install
+# without it reads pickled networks and reports the formats it cannot read;
+# install hgstools from source to get the rest.
 dependencies = [
     "numpy",
     "scipy",
