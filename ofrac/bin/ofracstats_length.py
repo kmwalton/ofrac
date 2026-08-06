@@ -21,15 +21,8 @@ from tabulate import tabulate
 
 from decimal import Decimal
 
-try:
-    from ofrac import ofracs
-    from ofrac.ofracs import OFracGrid,NotValidOFracGridError
-except ImportError:
-    # 'ofrac' can also resolve to the sub-package beside this script, which
-    # holds no 'ofracs'; that is an ImportError rather than a missing module
-    # accommodate "old style" PYTHONPATHing to within this module
-    import ofracs
-    from ofracs import OFracGrid,NotValidOFracGridError
+from ofrac import ofracs
+from ofrac.ofracs import OFracGrid,NotValidOFracGridError
 
 __VERBOSITY__ = 0
 

@@ -7,10 +7,7 @@ every tool parses "start/end/size" zone specifications the same way.
 import re
 import sys
 
-try:
-    from ofrac.p_system.constants import DIR
-except ModuleNotFoundError:
-    from p_system.constants import DIR
+from ofrac.p_system.constants import DIR
 
 
 class SpatialZone:            # {{{

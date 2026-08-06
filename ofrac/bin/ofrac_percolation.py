@@ -42,13 +42,8 @@ import re
 import sys
 from itertools import chain
 
-try:
-    from ofrac.ofracs import parse as parse_dfn
-    from ofrac.spatialzone import SpatialZone
-except ModuleNotFoundError:
-    # accommodate "old style" PYTHONPATHing to within this module
-    from ofracs import parse as parse_dfn
-    from spatialzone import SpatialZone
+from ofrac.ofracs import parse as parse_dfn
+from ofrac.spatialzone import SpatialZone
 
 FACE_NAMES = ('xmin', 'xmax', 'ymin', 'ymax', 'zmin', 'zmax')
 """The 6 boundary faces, in the fixed order every mask form agrees on."""

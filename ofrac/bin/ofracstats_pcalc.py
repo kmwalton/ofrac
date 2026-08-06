@@ -187,17 +187,10 @@ import json
 
 import numpy as np
 
-try:
-    from ofrac.ofracs import parse as parse_dfn
-    from ofrac.p_system import *
-    from ofrac.p_system.constants import *
-    from ofrac.spatialzone import SpatialZone
-except ModuleNotFoundError:
-    # accommodate "old style" PYTHONPATHing to within this module
-    from ofracs import parse as parse_dfn
-    from p_system import *
-    from p_system.constants import *
-    from spatialzone import SpatialZone
+from ofrac.ofracs import parse as parse_dfn
+from ofrac.p_system import *
+from ofrac.p_system.constants import *
+from ofrac.spatialzone import SpatialZone
 
 __VERBOSITY__ = 0
 """Module level verbosity"""

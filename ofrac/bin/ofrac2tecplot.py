@@ -5,11 +5,7 @@ import sys
 
 import argparse
 
-try:
-    import ofrac.ofracs as ofracs
-except ModuleNotFoundError:
-    # accommodate "old style" PYTHONPATHing to within this module
-    import ofracs
+import ofrac.ofracs as ofracs
 
 def main(argv=None):
 

@@ -24,10 +24,7 @@ import geojson
 from geojson import FeatureCollection, Feature, LineString
 import geopandas as gpd
 
-try:
-    import ofrac.ofracs as ofracs
-except ModuleNotFoundError:
-    import ofracs
+import ofrac.ofracs as ofracs
 
 
 _mu = 1.003e-3
