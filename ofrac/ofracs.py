@@ -216,14 +216,16 @@ AP_SCALE = 10**N_APERT_EXP
 """Number of integer storage units per unit of aperture"""
 
 STORE_DTYPE = np.int32
-"""`numpy` dtype of the integer-quantized fracture coordinate and aperture stores
+"""`numpy` dtype of the integer-quantized coordinate and aperture stores
 
-Fractures are stored as integer counts of `N_COORD_DIG` (and `N_APERT_DIG`)
-rather than as `Decimal` or floating point values. Integers preserve the exact
-equality and exact arithmetic that the rest of this module depends upon --- a
-fracture's orientation is found by testing two of its coordinates for equality,
-and grid lines are matched to fracture faces through `set` membership --- while
-allowing the whole network to be queried with vectorized `numpy` operations.
+Fractures, grid lines and the network's bounds are all stored as integer counts
+of `N_COORD_DIG` (and `N_APERT_DIG`) rather than as `Decimal` or floating point
+values. Integers preserve the exact equality and exact arithmetic that the rest
+of this module depends upon --- a fracture's orientation is found by testing two
+of its coordinates for equality, and grid lines are matched to fracture faces
+through `set` membership --- while allowing the whole network to be queried with
+vectorized `numpy` operations. Because grid lines share the fractures' units, a
+face and the grid line it generated cannot drift apart.
 
 At 32 bits this spans +/-2,147,483.647 m of coordinate, which is far more than
 the physical domains involved. Values arriving from outside raise
@@ -291,9 +293,9 @@ def _chk_co_range(a, operation):
     ii = np.iinfo(STORE_DTYPE)
     if a.size and (a.min() < ii.min or a.max() > ii.max):
         raise ValueError(
-            f'{operation} put a fracture outside the '
-            f'+/-{ii.max/CO_SCALE:,.3f} coordinate range that '
-            f'{np.dtype(STORE_DTYPE).name} fracture storage allows')
+            f'{operation} put a coordinate outside the '
+            f'+/-{ii.max/CO_SCALE:,.3f} range that '
+            f'{np.dtype(STORE_DTYPE).name} storage allows')
 
 def _bound2i(v, default):
     """Return bounding-box coordinate `v` in integer units, or `default`
@@ -309,6 +311,56 @@ def _bound2i(v, default):
         return default
 
     return _co2i(v)
+
+_CO_I_MIN = int(np.iinfo(STORE_DTYPE).min)
+_CO_I_MAX = int(np.iinfo(STORE_DTYPE).max)
+
+_I_LO = _CO_I_MIN - 1
+"""Stands for -Infinity among integer coordinates; below anything storable"""
+
+_I_HI = _CO_I_MAX + 1
+"""Stands for +Infinity among integer coordinates; above anything storable"""
+
+def _i2bound(i):
+    """Return a bound in integer units as a `Decimal`, or an infinity
+
+    Bounds --- the entries of `OFracGrid._mima` --- are integers like any other
+    coordinate, except that an unset or unbounded one saturates past what the
+    store can hold. Those come back out as the infinities the callers of
+    `getBounds` have always seen.
+    """
+    i = int(i)
+    if i > _CO_I_MAX:
+        return DINF
+    if i < _CO_I_MIN:
+        return -DINF
+    return _i2co(i)
+
+def _glarray(values=()):
+    """Return sorted, duplicate-free integer grid lines as a `numpy` array
+
+    Grid lines are held the way fractures are: exact integer counts of
+    `N_COORD_DIG`. Sorted-and-unique is the invariant every reader relies on,
+    whether it bisects the array or walks it looking for cell sizes.
+    """
+    if isinstance(values, np.ndarray):
+        a = values.astype(STORE_DTYPE, copy=False)
+    elif hasattr(values, '__len__'):
+        a = np.fromiter(values, dtype=STORE_DTYPE, count=len(values))
+    else:
+        a = np.fromiter(values, dtype=STORE_DTYPE)
+
+    return np.unique(a)
+
+def _gl2co(gla):
+    """Return integer grid lines as an array of coordinate-precision `Decimal`
+
+    Grid lines are stored as integers, but callers have always been handed
+    `Decimal`, exactly as `OFrac.d` hands out fracture coordinates.
+    """
+    ret = np.empty(len(gla), dtype=object)
+    ret[:] = [ _i2co(v) for v in gla ]
+    return ret
 
 def _ap2i(v):
     """Return aperture `v` as an exact integer count of `N_APERT_DIG` units"""
@@ -1224,10 +1276,12 @@ class OFrac():
         using the grid in self.myNet"""
 
         ngl = [1,1,1]
+        d = self._store._d[self._i]
 
         for a in range(3):
-            ngl[a] = max(1, (bisect_left(self.myNet._gl[a], self.d[2*a+1])
-                    - bisect_left(self.myNet._gl[a], self.d[2*a])))
+            gla = self.myNet._gl[a]
+            ngl[a] = max(1, int(np.searchsorted(gla, d[2*a+1])
+                    - np.searchsorted(gla, d[2*a])))
 
         return ngl[0] * ngl[1] * ngl[2]
 
@@ -1412,25 +1466,26 @@ class OFracGrid():
             messages.append(f'Found {nm} warnings among {len(fx)} input fractures.')
             print('\n'.join( m for m in messages), file=sys.stderr)
 
+        # the same bounding box, in the integer units grid lines are held in
+        si = [ _bound2i(v, _CO_I_MIN) for v in s ]
+        ei = [ _bound2i(v, _CO_I_MAX) for v in e ]
+
         # store fixed gridlines
         if fixedgl:
             for a in range(3):
                 # add gridlines
-                self._fixedgl[a] = set(D_CO(d) for d in
-                    filter( lambda candidate: s[a] <= candidate <= e[a], fixedgl[a]) )
+                self._fixedgl[a] = set(v for v in map(_co2i, fixedgl[a])
+                    if si[a] <= v <= ei[a] )
 
 
         # make gridlines, if not given
         self._gl = [ set(), set(), set() ]
         if gl:
             for i,g in enumerate(gl):
-                self._gl[i].update( d
-                    for d in filter(lambda v: s[i]<=v<=e[i],
-                        map(D_CO, g)
-                    )
-                )
+                self._gl[i].update( v for v in map(_co2i, g)
+                    if si[i] <= v <= ei[i] )
 
-            self._gl = list( sorted(x) for x in self._gl )
+            self._gl = list( map(_glarray, self._gl) )
             self._gridValid = True
             self._reCountFractures()
             self._remakeMinMax(useFixedGrid=True, useGrid=True, useFx=True)
@@ -1445,9 +1500,9 @@ class OFracGrid():
         # initially), presuming that the fracture network and fixed grid lines
         # provide what the users' choices here give the proper size
         if domainOrigin == None and ( fixedgl or fx ):
-            self.domainOrigin=tuple(D_CO(a[0]) for a in self._mima)
+            self.domainOrigin=tuple(_i2bound(a[0]) for a in self._mima)
         if domainSize == None and ( fixedgl or fx ):
-            self.domainSize=tuple(D_CO(a[1]) for a in self._mima)
+            self.domainSize=tuple(_i2bound(a[1]) for a in self._mima)
 
 
     def _setDomain(self,domainOrigin=None, domainSize=None):
@@ -1494,21 +1549,24 @@ class OFracGrid():
             ds = self.domainSize[a]
 
             if s.is_finite():
-                self._fixedgl[a].add(s)
+                self._fixedgl[a].add(_co2i(s))
 
                 if ds.is_finite():
-                    self._fixedgl[a].add(s+ds)
+                    self._fixedgl[a].add(_co2i(s+ds))
 
     def _resetMinMax(self):
         """set _mima to invalid range"""
-        # reset fx min and max coordinate lengths
-        self._mima = [ [DINF,-DINF],[DINF,-DINF],[DINF,-DINF], ]
+        # reset fx min and max coordinate lengths; the starting values are the
+        # integer stand-ins for +/-Infinity, so that the first real coordinate
+        # seen replaces them
+        self._mima = [ [_I_HI,_I_LO],[_I_HI,_I_LO],[_I_HI,_I_LO], ]
 
     def _remakeMinMax_includeFx(self, fx):
         # determine fx net min/max coordinate
+        d = fx._store._d[fx._i]
         for i in range(3):
-            self._mima[i][0] = min(self._mima[i][0], fx.d[2*i  ])
-            self._mima[i][1] = max(self._mima[i][1], fx.d[2*i+1])
+            self._mima[i][0] = min(self._mima[i][0], int(d[2*i  ]))
+            self._mima[i][1] = max(self._mima[i][1], int(d[2*i+1]))
 
     def _remakeMinMax(self, **kwargs) :
         """Use the given data source(s) to reset _mima values
@@ -1529,16 +1587,22 @@ class OFracGrid():
         if 'useGrid' in kwargs and kwargs['useGrid']:
             for a,gla in enumerate(self._gl):
                 if len(gla) == 0: continue
-                self._mima[a][0] = min(self._mima[a][0], gla[ 0])
-                self._mima[a][1] = max(self._mima[a][1], gla[-1])
+                # grid lines are sorted, except while they are being rebuilt
+                # and are still held as sets
+                if isinstance(gla, np.ndarray):
+                    (lo, hi) = (int(gla[0]), int(gla[-1]))
+                else:
+                    (lo, hi) = (min(gla), max(gla))
+                self._mima[a][0] = min(self._mima[a][0], lo)
+                self._mima[a][1] = max(self._mima[a][1], hi)
 
         if 'useFx' in kwargs and kwargs['useFx'] and len(self._fx) > 0:
             d = self._fx.coords
             for i in range(3):
                 self._mima[i][0] = min(
-                    self._mima[i][0], _i2co(d[:, 2*i  ].min()))
+                    self._mima[i][0], int(d[:, 2*i  ].min()))
                 self._mima[i][1] = max(
-                    self._mima[i][1], _i2co(d[:, 2*i+1].max()))
+                    self._mima[i][1], int(d[:, 2*i+1].max()))
 
 
     def _remakeGridLineLists(self, keep_glAsSets=False):
@@ -1555,15 +1619,16 @@ class OFracGrid():
             d = self._fx.coords
 
             # add gridlines; np.unique collapses the (many) repeated fracture
-            # face coordinates before any Decimal is built
+            # face coordinates before they reach the set
             for a in range(3):
-                self._gl[a].update(map(_i2co, np.unique(d[:, 2*a:2*a+2])))
+                self._gl[a].update(
+                    int(v) for v in np.unique(d[:, 2*a:2*a+2]))
 
             # determine fx net min/max coordinate
             self._remakeMinMax( useFx=True )
 
         if not keep_glAsSets:
-            self._gl = list( sorted(x) for x in self._gl )
+            self._gl = list( map(_glarray, self._gl) )
             self._gridValid = True
 
         self._reCountFractures()
@@ -1595,7 +1660,7 @@ class OFracGrid():
                     "getBounds "
                     "called when _gridValid == False")
             #self._remakeGridLineLists()
-        return copy.deepcopy(self._mima)
+        return [ [ _i2bound(v) for v in mm ] for mm in self._mima ]
 
     def invalidateGrid(self):
         """Set the gridlines, boundaries, and fracture counts to be invalid."""
@@ -1620,14 +1685,19 @@ class OFracGrid():
         s = self.domainOrigin
         e = self.getDomainEnd()
 
+        # the same bounds in grid line units; an infinite bound saturates, so
+        # that it excludes nothing and is not itself added as a grid line
+        si = [ _bound2i(v, _CO_I_MIN) for v in s ]
+        ei = [ _bound2i(v, _CO_I_MAX) for v in e ]
+
         for a in range(3):
             glsToRemove = set()
             for gl in self._fixedgl[a]:
-                if gl < s[a] or e[a] < gl:
+                if gl < si[a] or ei[a] < gl:
                     glsToRemove.add(gl)
                     #warnings.warn(message,UserWarning)
                     if __VERBOSITY__ > 1:
-                        message = "User-specified gridline at {}={} is being removed!".format('xyz'[a],gl)
+                        message = "User-specified gridline at {}={} is being removed!".format('xyz'[a],_i2co(gl))
                         print(message, file=sys.stderr)
             if __VERBOSITY__ and len(glsToRemove)>0:
                 print("Removed {} user-specifed gridlines in {}".format(len(glsToRemove),'xyz'[a]), file=sys.stderr)
@@ -1636,21 +1706,27 @@ class OFracGrid():
 
         # add gridlines representing the size
         for a in range(3):
-            self._fixedgl[a].add( s[a] )
-            self._fixedgl[a].add( e[a] )
+            if s[a].is_finite():
+                self._fixedgl[a].add( si[a] )
+            if e[a].is_finite():
+                self._fixedgl[a].add( ei[a] )
 
         # cull gridlines
         # assume these are already sorted
         for a,gla in enumerate(self._gl):
-            f = bisect_left( gla, s[a] )
-            l = bisect_right( gla, e[a] )
+            f = np.searchsorted( gla, si[a], side='left' )
+            l = np.searchsorted( gla, ei[a], side='right' )
             gla = gla[f:l]
 
-            if not gla or gla[0] != s[a]:
-                gla.insert(0,s[a])
+            # the domain's own faces are grid lines, whether or not any
+            # fracture put one there
+            ends = [ si[a] ] if s[a].is_finite() else []
+            if e[a].is_finite():
+                ends.append( ei[a] )
 
-            if gla[-1] != e[a]:
-                gla.insert(len(gla),e[a])
+            if ends:
+                gla = _glarray(np.concatenate(
+                    (gla, np.array(ends, dtype=STORE_DTYPE))))
 
             # store-back to self
             self._gl[a] = gla
@@ -1731,19 +1807,27 @@ class OFracGrid():
         # move grid
         for ax,sc in enumerate(s):
 
-            # move mins and maxes
-            for i in range(2):
-                self._mima[ax][i] = D_CO(self._mima[ax][i]*sc)
+            # scaling in integer units rounds halves to even, the way
+            # D_CO(v*sc) did, but without a Decimal per grid line
+            fsc = float(sc)
 
-            # times-equals
             def te(v):
-                return D_CO(v*sc)
+                scaled = np.rint(np.asarray(v, dtype=np.float64) * fsc)
+                _chk_co_range(scaled, 'Scaling')
+                return scaled.astype(STORE_DTYPE)
+
+            # move mins and maxes, leaving any unbounded one unbounded
+            for i in range(2):
+                if _CO_I_MIN <= self._mima[ax][i] <= _CO_I_MAX:
+                    self._mima[ax][i] = int(te(self._mima[ax][i]))
 
             # move fixed gridlines
-            self._fixedgl[ax] = set(map(te,self._fixedgl[ax]))
+            self._fixedgl[ax] = set(
+                int(v) for v in te(sorted(self._fixedgl[ax])))
 
-            # move gridlines, inplace
-            self._gl[ax][:] = map(te,self._gl[ax])
+            # move gridlines; a negative scaling reverses them, and two lines
+            # may land on the same coordinate, so re-establish the invariant
+            self._gl[ax] = _glarray(te(self._gl[ax]))
 
 
     def translate(self, t):
@@ -1775,22 +1859,28 @@ class OFracGrid():
             if tv == Decimal('0'):
                 continue
 
-            # plusequals
+            itv = _co2i(tv)
+
+            # plusequals; exact in integer units
             def pe_tv(v):
-                return v+tv
+                return v+itv
 
             # move origin
             newOrigin[ax] += tv
 
-            # move mins and maxes
-            self._mima[ax][0] += tv
-            self._mima[ax][1] += tv
+            # move mins and maxes, leaving any unbounded one unbounded
+            for i in range(2):
+                if _CO_I_MIN <= self._mima[ax][i] <= _CO_I_MAX:
+                    self._mima[ax][i] += itv
 
             # move fixed gridlines
             self._fixedgl[ax] = set(map(pe_tv,self._fixedgl[ax]))
 
-            # move gridlines, inplace
-            self._gl[ax][:] = map(pe_tv,self._gl[ax])
+            # move gridlines; widen before adding so that leaving the storage
+            # range is caught rather than wrapped
+            shifted = self._gl[ax].astype(np.int64) + itv
+            _chk_co_range(shifted, 'Translation')
+            self._gl[ax] = shifted.astype(STORE_DTYPE)
 
         self.domainOrigin = tuple(newOrigin)
         del newOrigin
@@ -2344,9 +2434,10 @@ class OFracGrid():
         for a in range(3):
             if float(nudgeInc[a]) == 0.:
                 continue
-            newGL = set(nudge(v, nudgeInc[a]) for v in self._gl[a])
+            newGL = set(_co2i(nudge(_i2co(v), nudgeInc[a]))
+                for v in self._gl[a])
             newGL.update(self._fixedgl[a])
-            self._gl[a] = sorted(newGL)
+            self._gl[a] = _glarray(newGL)
 
         failedNudges = []
         for i,of in enumerate(self._fx):
@@ -2399,17 +2490,15 @@ class OFracGrid():
         # spot in the  list of gridlines, and checking that the domain bounding
         # box is still accurate
 
-        v = D_CO(glvalue)
+        v = _co2i(glvalue)
         self._fixedgl[axis].add(v)
 
         if type(self._gl[axis]) == set:
-            self._gl[axis].update(v)
+            self._gl[axis].add(v)
         else:
-            i = bisect_left(self._gl[axis], v)
-            if i == len(self._gl[axis]):
-                self._gl[axis].append(v)
-            elif self._gl[axis][i] != v:
-                self._gl[axis].insert(i,v)
+            i = int(np.searchsorted(self._gl[axis], v))
+            if i == len(self._gl[axis]) or self._gl[axis][i] != v:
+                self._gl[axis] = np.insert(self._gl[axis], i, v)
 
         self._remakeMinMax(useFixedGrid=True)
 
@@ -2426,11 +2515,11 @@ class OFracGrid():
             'y', or 'z'
         """
         if axis == 'all':
-            return [ np.array(a) for a in self._gl ]
+            return [ _gl2co(a) for a in self._gl ]
         elif axis in (0, 1, 2):
-            return np.array(self._gl[axis])
+            return _gl2co(self._gl[axis])
         elif axis in ('x', 'y', 'z'):
-            return np.array(self._gl['xyz'.index(axis)])
+            return _gl2co(self._gl['xyz'.index(axis)])
         raise ValueError(f'Cannot interperet "{axis}" as an axis')
 
     def getGridLineCounts(self):
@@ -2444,7 +2533,7 @@ class OFracGrid():
                     "getGridLineFirstInterval "
                     "called when _gridValid == False")
             #self._remakeGridLineLists()
-        return self._gl[axis][1] - self._gl[axis][0]
+        return _i2co(int(self._gl[axis][1]) - int(self._gl[axis][0]))
 
     def iterGridLines(self, axis):
         """Iterate through grid lines of a given axis"""
@@ -2461,7 +2550,7 @@ class OFracGrid():
             #self._remakeGridLineLists()
 
         for v in self._gl[axis]:
-            yield v
+            yield _i2co(v)
 
     def isUniformGridSpacing(self, axis):
         """Scan grid lines to determine if spacing is uniform"""
@@ -2479,15 +2568,11 @@ class OFracGrid():
         # trivial
         if len(self._gl[axis]) <= 2: return True
 
-        # check spacing between all pairs
-        diff = self._gl[axis][1] - self._gl[axis][0]
+        # check spacing between all pairs; in integer units "uniform" is exact
+        # equality, with no tolerance to pick
+        diffs = np.diff(self._gl[axis].astype(np.int64))
 
-        for i in range(2,len(self._gl[axis])):
-            tdiff = self._gl[axis][i] - self._gl[axis][i-1]
-            # fail early
-            if abs(tdiff - diff) > 1e-6:
-                return False
-        return True
+        return bool(np.all(diffs == diffs[0]))
 
     def addRegularGlSpacing(self, spacing):
         """Add grid lines at regular intervals from the domainOrigin
@@ -2510,15 +2595,17 @@ class OFracGrid():
             if s < 0.0:
                 raise ValueError('Spacing cannot be less than zero')
 
-            gls = set(self._gl[i])
+            gls = set(int(v) for v in self._gl[i])
 
-            o = self.domainOrigin[i]
+            o = _co2i(self.domainOrigin[i])
             ngl = int(floor(float(self.domainSize[i])/s))
 
-            s = D_CO(s)
+            # a whole number of storage units per interval, so that the n-th
+            # grid line is exactly n intervals from the origin
+            s = _co2i(s)
             gls.update( [ o+igl*s for igl in range(1, ngl) ] )
 
-            self._gl[i] = list(sorted(gls))
+            self._gl[i] = _glarray(gls)
 
     def setMaxGlSpacing( self, maxGlSpacing ):
         """Add new gridlines so that the maximum space between is respected
@@ -2531,25 +2618,25 @@ class OFracGrid():
             if not maxGlSpacing[a]:
                 continue
 
-            maxS = D_CO(maxGlSpacing[a])
-            newGl = []
-            eps = D_CO('0.001')
+            maxS = _co2i(maxGlSpacing[a])
+            newGl = [ int(v) for v in gla ]
 
             for i in range(len(gla)-1):
-                l1 = gla[i]
-                l2 = gla[i+1]
+                l1 = int(gla[i])
+                l2 = int(gla[i+1])
+                gap = l2 - l1
 
-                if l2-l1 > maxS:
-                    nspac = ceil((l2-l1)/maxS)
-                    spac = (l2-l1)/nspac
-                    while l1 < l2-eps:
-                        newGl.append( l1 )
-                        l1 += spac
-                else:
-                    newGl.append( l1 )
+                if gap <= maxS:
+                    continue
 
-            newGl.append(gla[-1])
-            self._gl[a] = newGl[:]
+                # divide the gap into equal parts, each no wider than maxS.
+                # Each new line is placed from l1 rather than from the line
+                # before it, so no rounding accumulates along the gap.
+                nspac = -(-gap // maxS)
+                newGl.extend(
+                    l1 + (k*gap + nspac//2)//nspac for k in range(1, nspac))
+
+            self._gl[a] = _glarray(newGl)
 
         self._gridValid = True
 
@@ -2570,29 +2657,38 @@ class OFracGrid():
         for v in refList:
             if v <= 0.0: raise ValueError(errmsg)
 
-        # map inputs to Decimal type
-        refList = list( D_CO(v) for v in refList )
+        # map inputs to integer storage units, and make them cumulative
+        refList = list( _co2i(v) for v in refList )
         for i in range(1, len(refList)):
             refList[i] += refList[i-1]
 
-        glSets = [ set(gll) for gll in self._gl ]
+        glSets = [ set(int(v) for v in gll) for gll in self._gl ]
 
         beforeCounts = self.getGridLineCounts()
 
-        # add in refinements
-        for fx in self._fx:
+        # add in refinements, an axis at a time; the many fractures sharing a
+        # plane refine that plane once
+        perp = self._fx.perp_axes
+        d = self._fx.coords
 
-            (perpAxis, paVal) = fx.determinePerpAxisVal()
-            setToAddTo = glSets[perpAxis]
-            mima = self._mima[perpAxis]
+        for a in range(3):
+            onAxis = (perp == a)
+            if not np.any(onAxis):
+                continue
+
+            # int64 so that a refinement reaching past the storage range is
+            # compared, and discarded, rather than wrapped
+            planes = np.unique(d[onAxis, 2*a]).astype(np.int64)
+            (mi, ma) = self._mima[a]
 
             for r in refList:
-                if paVal - r > mima[0]:
-                    setToAddTo.add( paVal-r )
-                if paVal + r < mima[1]:
-                    setToAddTo.add( paVal+r )
+                below = planes - r
+                glSets[a].update(int(v) for v in below[below > mi])
 
-        self._gl = list( sorted(x) for x in glSets )
+                above = planes + r
+                glSets[a].update(int(v) for v in above[above < ma])
+
+        self._gl = list( map(_glarray, glSets) )
 
         self._gridValid = True
 
@@ -2624,7 +2720,8 @@ class OFracGrid():
             "Size":self.strDomFromTo(),
 
             "Mins & Maxes":"{}".format(
-                    ",".join( numTuple2str(t,sep='->') for t in self._mima)),
+                    ",".join( numTuple2str([_i2bound(v) for v in t],sep='->')
+                        for t in self._mima)),
 
             "Grid line counts":"nx={}, ny={}, nz={}".format(
                     *map(len, self._gl) ),
@@ -2774,9 +2871,8 @@ class OFracGrid():
             domS = tuple(map(lambda v: v[1]-v[0], zip(domO,domE)))
 
             for a in range(3):
-                newGrid._gl[a] = list(set(newGrid._gl[a])|set(other._gl[a]))
-                #newGrid._gl[a].extend( other._gl[a] )
-                newGrid._gl[a].sort()
+                newGrid._gl[a] = _glarray(np.concatenate(
+                    (newGrid._gl[a], other._gl[a])))
 
             newGrid._setDomain(domO,domS)
             newGrid._remakeMinMax(useGrid=True)
@@ -2865,7 +2961,7 @@ class OFracGrid():
         cutout_o = [ x1, y1, z1 ]
         cutout_sz = list(max(N_COORD_DIG,j-i) for i,j in iterpairs(coords))
         for i,o,v in zip(count(), cutout_o, cutout_sz):
-            if o + v > cutout._mima[i][1]:
+            if o + v > _i2bound(cutout._mima[i][1]):
                 cutout_o[i] -= v
         cutout.setDomainSize(cutout_o, cutout_sz)
 
@@ -2939,10 +3035,28 @@ class OFracGrid():
         """Restore an unpickled network.
 
         Networks pickled before fractures were array-backed hold `_fx` as a
-        `list` of `OFrac`; convert it to an `OFracArray`.
+        `list` of `OFrac`; convert it to an `OFracArray`. Networks pickled
+        before grid lines were integer-quantized hold `_gl`, `_fixedgl` and
+        `_mima` as `Decimal`; convert those too.
         """
 
         self.__dict__.update(state)
+
+        def isDecimalGl(seq):
+            return any(isinstance(v, Decimal) for a in seq for v in a)
+
+        if isDecimalGl(state.get('_gl', ())):
+            self._gl = list(_glarray([_co2i(v) for v in a]) for a in self._gl)
+
+        if isDecimalGl(state.get('_fixedgl', ())):
+            self._fixedgl = [ set(map(_co2i, a)) for a in self._fixedgl ]
+
+        if isDecimalGl(state.get('_mima', ())):
+            # an unbounded axis was stored as an infinity
+            self._mima = [ [
+                    _I_LO if v == -DINF else _I_HI if v == DINF else _co2i(v)
+                    for v in mm ]
+                for mm in self._mima ]
 
         if not isinstance(state.get('_fx', None), OFracArray):
             oldfx = state.get('_fx', None) or []

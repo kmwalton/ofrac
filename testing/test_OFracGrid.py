@@ -14,7 +14,7 @@ import numpy as np
 
 from ofrac import ofracs
 from ofrac.ofracs import (OFrac, OFracArray, OFracGrid, as_nudge_triple)
-from ofrac.ofracs import (CO_SCALE, AP_SCALE, STORE_DTYPE,
+from ofrac.ofracs import (CO_SCALE, AP_SCALE, STORE_DTYPE, D_CO,
         _co2i, _i2co, _ap2i, _i2ap)
 
 
@@ -146,6 +146,165 @@ class TestQuantization(unittest.TestCase):
         self.assertEqual(g.getFxCounts(), (1,1,1))
         for a in range(3):
             self.assertIn(Decimal('0.300'), g.getGridLines(a).tolist())
+
+
+class TestGridLineQuantization(unittest.TestCase):
+    """Grid lines are held as the same integer quanta as fractures"""
+
+    assertArrayEqual = TestOFracGrid.assertArrayEqual
+
+    def _grid(self):
+        return OFracGrid(domainOrigin=(0.,0.,0.), domainSize=(1.,1.,1.), fx=[
+            (0., 1., 0., 1., 0.3, 0.3, 0.001),
+            (0., 1., 0.3, 0.3, 0., 1., 0.001),
+            (0.3, 0.3, 0., 1., 0., 1., 0.001),
+        ])
+
+    def assertOnTheQuantum(self, gl):
+        """Every grid line is a whole number of N_COORD_DIG units"""
+        for v in gl:
+            self.assertIsInstance(v, Decimal)
+            self.assertEqual(v, D_CO(v),
+                f'grid line {v} is not on the coordinate quantum')
+
+    def assertSortedUnique(self, gla):
+        self.assertEqual(list(gla), sorted(set(gla)))
+
+    def test_gridlines_are_stored_as_integers(self):
+        g = self._grid()
+        for a in range(3):
+            self.assertEqual(g._gl[a].dtype, STORE_DTYPE)
+            self.assertTrue(all(isinstance(v, int) for v in g._fixedgl[a]))
+            self.assertTrue(all(isinstance(v, int) for v in g._mima[a]))
+
+        self.assertArrayEqual(g._gl[0], [0, 300, 1000])
+
+    def test_gridlines_come_out_as_decimals(self):
+        """The store is integer, but the interface is unchanged"""
+        g = self._grid()
+        self.assertOnTheQuantum(g.getGridLines('x').tolist())
+        self.assertOnTheQuantum(list(g.iterGridLines(0)))
+        self.assertEqual(g.getGridLines(0).tolist(),
+                [Decimal('0.000'), Decimal('0.300'), Decimal('1.000')])
+        self.assertEqual(g.getGridLineFirstInterval(0), Decimal('0.300'))
+        self.assertEqual(g.getBounds()[0], [Decimal('0.000'), Decimal('1.000')])
+
+    def test_gridlines_match_fracture_faces_exactly(self):
+        """A fracture face is findable among the grid lines it generated"""
+        g = self._grid()
+        gl = set(g.getGridLines('x').tolist())
+        for f in g.iterFracs():
+            self.assertIn(f.d[0], gl)
+            self.assertIn(f.d[1], gl)
+
+    def test_max_spacing_does_not_drift(self):
+        """Subdividing a gap keeps every new line on the quantum
+
+        Accumulating a fractional spacing along the gap used to leave grid
+        lines like 0.650000000001, which no fracture face can ever equal.
+        """
+        g = self._grid()
+        g.setMaxGlSpacing((0.13, None, None))
+
+        gl = g.getGridLines('x').tolist()
+        self.assertOnTheQuantum(gl)
+        self.assertSortedUnique(gl)
+
+        # the lines it started from are still there...
+        for v in (Decimal('0.000'), Decimal('0.300'), Decimal('1.000')):
+            self.assertIn(v, gl)
+
+        # ...and no gap is wider than asked for
+        for (a, b) in zip(gl, gl[1:]):
+            self.assertLessEqual(b-a, Decimal('0.130'))
+
+    def test_max_spacing_divides_evenly(self):
+        g = self._grid()
+        g.setMaxGlSpacing((0.3, None, None))
+        self.assertEqual(g.getGridLines('x').tolist(), [
+            Decimal('0.000'), Decimal('0.300'),
+            Decimal('0.533'), Decimal('0.767'), Decimal('1.000')])
+
+    def test_regular_spacing_is_exact(self):
+        """The n-th line is exactly n intervals from the origin"""
+        g = OFracGrid(domainOrigin=(0.1,0.,0.), domainSize=(1.,1.,1.),
+                fx=[(0.1, 1.1, 0., 1., 0.5, 0.5, 0.001)])
+        g.addRegularGlSpacing((0.3, None, None))
+
+        # 0.1 + n*0.3, exactly, for as many whole intervals as the domain holds
+        self.assertEqual(g.getGridLines('x').tolist(), [
+            Decimal('0.100'), Decimal('0.400'),
+            Decimal('0.700'), Decimal('1.100')])
+
+    def test_refine_near_fx_stays_on_the_quantum(self):
+        g = self._grid()
+        g.refineNearFx((0.05, 0.1))
+
+        gl = g.getGridLines('x').tolist()
+        self.assertOnTheQuantum(gl)
+        self.assertSortedUnique(gl)
+        self.assertEqual(gl, [
+            Decimal('0.000'), Decimal('0.150'), Decimal('0.250'),
+            Decimal('0.300'), Decimal('0.350'), Decimal('0.450'),
+            Decimal('1.000')])
+
+    def test_uniform_spacing_is_exact(self):
+        g = self._grid()
+        self.assertFalse(g.isUniformGridSpacing(0))
+
+        h = OFracGrid(domainOrigin=(0.,0.,0.), domainSize=(1.,1.,1.),
+                fx=[(0., 1., 0., 1., 0.5, 0.5, 0.001)])
+        self.assertTrue(h.isUniformGridSpacing(2))
+
+    def test_added_gridline_keeps_the_order(self):
+        g = self._grid()
+        g.addGridline(0, 0.75)
+        self.assertEqual(g.getGridLines('x').tolist(), [
+            Decimal('0.000'), Decimal('0.300'),
+            Decimal('0.750'), Decimal('1.000')])
+
+        # adding it again changes nothing
+        g.addGridline(0, 0.75)
+        self.assertEqual(g.getGridLineCounts()[0], 4)
+        self.assertIn(_co2i(0.75), g._fixedgl[0])
+
+    def test_moved_gridlines_keep_the_invariant(self):
+        """Scaling may reverse or collapse grid lines; they stay sorted"""
+        g = self._grid()
+        g.translate((1.5, 0., 0.))
+        self.assertEqual(g.getGridLines('x').tolist(), [
+            Decimal('1.500'), Decimal('1.800'), Decimal('2.500')])
+
+        h = self._grid()
+        h.scale((-1., 1., 1.))
+        gl = h.getGridLines('x').tolist()
+        self.assertSortedUnique(gl)
+        self.assertEqual(gl, [
+            Decimal('-1.000'), Decimal('-0.300'), Decimal('0.000')])
+
+        # a scaling small enough to bring two lines together leaves one
+        i = self._grid()
+        i.scale((0.001, 1., 1.))
+        self.assertEqual(i.getGridLines('x').tolist(),
+                [Decimal('0.000'), Decimal('0.001')])
+
+    def test_unpickling_converts_decimal_gridlines(self):
+        """Networks pickled before this change hold Decimal grid lines"""
+        g = self._grid()
+
+        legacy = dict(g.__dict__)
+        legacy['_gl'] = [ [_i2co(v) for v in a] for a in g._gl ]
+        legacy['_fixedgl'] = [ set(_i2co(v) for v in a) for a in g._fixedgl ]
+        legacy['_mima'] = [ [_i2co(v) for v in mm] for mm in g._mima ]
+
+        h = OFracGrid.__new__(OFracGrid)
+        h.__setstate__(legacy)
+
+        for a in range(3):
+            self.assertEqual(h._gl[a].dtype, STORE_DTYPE)
+        self.assertEqual(h.getGridLines('x').tolist(),
+                g.getGridLines('x').tolist())
+        self.assertEqual(h.getBounds(), g.getBounds())
 
 
 class TestStorageRange(unittest.TestCase):
