@@ -186,6 +186,7 @@ from typing import NamedTuple
 import json
 
 import numpy as np
+import scipy.stats
 
 from ofrac.ofracs import parse as parse_dfn
 from ofrac.p_system import *
@@ -568,6 +569,11 @@ class FractureZone:                                         #{{{
       Lengths are of the part of each fracture inside the zone when the zone
       was made with `truncateToZone`; a fracture that leaves nothing inside the
       zone is left out.
+
+      Mirrors the descriptive stats ``ofracstats-length.py`` reports (N,
+      ARITHMETICMEAN, GEOMEAN, MIN/MAX), but per sample zone instead of per
+      whole-network bin, so a store's ``fx_pcalc.json`` can carry them
+      per-HGU with no second pass over the network.
       """
 
       ext = self.ext_zone
@@ -587,6 +593,12 @@ class FractureZone:                                         #{{{
             'MAX': float(l.max()) if l.size else 0.0,
             'SUM': float(l.sum()),
             'COUNT': int(l.size),
+            'ARITHMETICMEAN': float(l.mean()) if l.size else float('nan'),
+            # gmean raises on an all-zero/empty input; a censored window can
+            # legitimately have none of a given axis's lengths (e.g. no
+            # z-fractures in a zone), so that is reported as NaN rather than
+            # letting scipy's warning/exception through
+            'GEOMEAN': float(scipy.stats.gmean(l)) if l.size and np.all(l > 0) else float('nan'),
             }
 
       return stats
@@ -829,6 +841,7 @@ def doEverything(args, batchDir=''):
 
             results.append(_r)
             _d.update(_organize_PXXResults(_r))
+            _d['lengths'] = fzn.lengths()
             dict4json[f'Zone{izn}'] = _d
 
     else:
@@ -854,6 +867,7 @@ def doEverything(args, batchDir=''):
                 results.append(_r)
 
                 _d.update(_organize_PXXResults(_r))
+                _d['lengths'] = fzn.lengths()
                 dict4json[f'Zone{izn}'] = _d
 
 
