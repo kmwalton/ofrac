@@ -200,6 +200,76 @@ class MatrixBlockOFracGrid(ofracs.OFracGrid):
         logger.info(f'Processed {npts} matrix blocks')
         return blocks
 
+    @staticmethod
+    def _lhs_points(origin, size, nstrata):
+        """Return Latin hypercube points in a box, shape (max(nstrata), 3)
+
+        See `find_blocks_lhs` for the meaning of `nstrata`.
+        """
+
+        try:
+            ns = np.broadcast_to(np.asarray(nstrata, dtype=int), (3,))
+        except ValueError:
+            raise ValueError(
+                f'nstrata must be one count or three, not {nstrata}') from None
+        if np.any(ns < 1):
+            raise ValueError(f'nstrata must be positive, not {nstrata}')
+
+        domo = np.array(origin, dtype=np.single)
+        doms = np.array(size, dtype=np.single)
+
+        npts = int(ns.max())
+        pts = np.empty((npts, 3))
+        for iax, k in enumerate(ns):
+            # stratum index of each point, each stratum used at least once
+            istrat = np.random.permutation(np.arange(npts)*k//npts)
+            pts[:,iax] = domo[iax] + doms[iax]*(istrat+np.random.rand(npts))/k
+
+        return pts
+
+    def find_blocks_lhs(self, nstrata=5, filter_keywords=[]):
+        """Return unique blocks seeded by a Latin hypercube sample
+
+        Each axis of the domain is cut into equal strata: `nstrata` of them on
+        every axis if it is a scalar, or (nx, ny, nz) of them if it is a
+        triple. There are max(nstrata) seed points and every stratum of every
+        axis holds at least one; an axis with fewer strata than there are
+        points shares its strata among the points as evenly as possible. With
+        equal counts on every axis this is a classic Latin hypercube.
+
+        Seed points that fall in the same block yield that block once, so there
+        may be fewer blocks than seed points. Blocks are the same when their
+        bounding boxes are; bounding fracture indices alone cannot tell apart
+        blocks whose other faces are domain boundaries.
+
+        Check each block versus the given filters from `MatrixBlock.FILTERS`.
+        """
+
+        pts = MatrixBlockOFracGrid._lhs_points(
+                self.domainOrigin, self.domainSize, nstrata)
+        npts = len(pts)
+
+        blocks = {}
+        for p in pts:
+            logger.debug(f'Chose point {p}')
+            bl = MatrixBlock(self, p)
+
+            rejecting = [fkw for fkw in filter_keywords
+                    if not MatrixBlock.FILTERS[fkw](bl)]
+            if rejecting:
+                logger.debug(f'Filter {rejecting[0]} rejected block at {p}')
+                continue
+
+            key = bl.bb.tobytes()
+            if key not in blocks:
+                blocks[key] = bl
+            else:
+                logger.debug(f'Rejecting duplicate block at {p}')
+
+        logger.info(f'Processed {npts} Latin hypercube seed points; '
+            + f'using {len(blocks)} unique blocks.')
+        return list(blocks.values())
+
 
 class MatrixBlock:
     """Representation of a matrix block bounded by fractures

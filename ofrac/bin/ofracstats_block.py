@@ -68,11 +68,42 @@ class BlockHow(argparse.Action):
 
         parser.error(f'Bad value for {option_string}')
 
+class BlockHowLHS(argparse.Action):
+    """Choose blocks by Latin hypercube; takes one or three strata counts"""
+
+    def __call__(self, parser, namespace, values, option_string):
+
+        if len(values) not in (1, 3):
+            parser.error(f'{option_string} takes 1 or 3 strata counts, '
+                + f'not {len(values)}')
+        if any(v < 1 for v in values):
+            parser.error(f'{option_string} strata counts must be positive')
+
+        nstrata = values[0] if len(values) == 1 else tuple(values)
+        setattr(namespace, self.dest,
+                lambda dfn: dfn.find_blocks_lhs(nstrata))
+
+    @staticmethod
+    def add_to(parser):
+        """Add the -lhs option to `parser` or an argument group"""
+        return parser.add_argument('-lhs', '--lhs',
+            metavar='N',
+            nargs='+',
+            type=int,
+            dest='make_blocks',
+            action=BlockHowLHS,
+            help='''Seed blocks by Latin hypercube sampling, with N strata on
+            each axis, or "L M N" for different counts on the x-, y-, and
+            z-axes. Duplicate blocks are dropped. Give this after the
+            positional file name(s), or end it with "--".''',
+            )
+
 def main(argv=None):
 
     argp = argparse.ArgumentParser()
 
-    argp.add_argument('-n', '--nblocks',
+    how = argp.add_mutually_exclusive_group()
+    how.add_argument('-n', '--nblocks',
         metavar='N|{"reg"}',
         help='''Number of matrix blocks in random sample, or "reg[ular]" for a
         regular grid. Default 10.''',
@@ -80,6 +111,7 @@ def main(argv=None):
         dest='make_blocks',
         action=BlockHow,
         )
+    BlockHowLHS.add_to(how)
     argp.add_argument('-f', '--block-filter',
         choices=list(MatrixBlock.FILTERS.keys()),
         default=None,
