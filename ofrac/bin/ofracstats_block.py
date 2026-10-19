@@ -21,6 +21,7 @@ import numpy as np
 from time import perf_counter
 from itertools import chain
 
+from ofrac import ofracs
 from ofrac.ofracs import numTuple2str as t2s
 from ofrac.matrixblock import MatrixBlockOFracGrid, MatrixBlock
 
