@@ -2,15 +2,46 @@
 
 A container and grid generator for 3D, axis-aligned, orthogonal fracture
 networks. Typically, text data files generated externally (e.g., by proprietary
-codes RFGen, or Fractran) use the data types and container herin to
+codes RFGen, or Fractran) use the data types and container herein to
 convert and manipulate networks and grids.
 
-External generator and parsers are usually required. `ofracs.OFrac` provides
+External generators and parsers are usually required. `ofracs.OFrac` provides
 basic construction from 7 floating point values, like the following:
 
  xfrom    xto    yfrom    yto    zfrom   zto  aperture
 
    0.0     1.0     0.5     0.5     0.0    1.0  0.000100
+
+Creating a network
+------------------
+There are three ways to get an `OFracGrid`.
+
+1. Build it directly from fractures and/or a domain:
+
+        from ofrac.ofracs import OFracGrid
+
+        g = OFracGrid(domainOrigin=(0, 0, 0), domainSize=(10, 1, 10),
+                      fx=[(0, 5, 0.5, 0.5, 0, 10, 1e-4)])
+
+   See `OFracGrid` for every argument, the accepted shapes and the units.
+
+2. Read it from a file with `parse`, which tries every available parser in
+   turn and returns the first `OFracGrid` that one of them produces:
+
+        g = parse('fracs.rfd')
+
+   Pickled networks are always readable. RFGen, FRACTRAN and HGS formats need
+   the optional `hgstools` package; without it `parse` raises
+   `NotValidOFracGridError` naming the formats it could not read.
+
+3. Save and restore a network with `OFracGrid.pickleTo` and
+   `OFracGrid.unpickleFrom`.
+
+Precision
+---------
+Coordinates are held to 0.001 (`N_COORD_DIG`) and apertures to 0.000001
+(`N_APERT_DIG`). Finer input is rounded, so an aperture of `1e-8` is stored as
+zero. Coordinates must lie within about +/-2,147,483 (see `STORE_DTYPE`).
 
 AUTHOR: Ken Walton, kmwalton@g360group.org.
 Licenced under GNU GPLv3
@@ -38,7 +69,7 @@ import numpy as np
 __docformat__='numpy'
 
 _import_warning_strings = []
-"""An array of warnining messages about parsers that have not been found."""
+"""An array of warning messages about parsers that have not been found."""
 
 _OPTIONAL_IMPORT_ALIASES = frozenset(('pyhgs',))
 """Names an absent optional dependency may report itself under.
@@ -72,7 +103,7 @@ def _optional_import(modname):
 def populate_parsers():
     """Return a list of OFracGrid parser options.
 
-    The list will depen on what other packages are on the system and  accessible
+    The list will depend on what other packages are on the system and accessible
     in PYTHONPATH, like FRACTRAN, HGS, RFGen, or Compflow, which may have
     parsers of orthogonal fracture networks.
     """
@@ -1387,7 +1418,21 @@ def _label_components(n, pairs):
 
 
 class OFracGrid():
-    """Container/Utility class for an orthogonal fracture network."""
+    """Container/Utility class for an orthogonal fracture network.
+
+    Holds a set of axis-aligned planar fractures and the grid lines (the sorted
+    distinct coordinates along each of x, y and z) that a finite-difference or
+    finite-element mesh of them would use. See `__init__` for how to build one,
+    and the module documentation for reading one from a file (`parse`).
+
+    Example
+    -------
+    A 10 x 1 x 10 domain holding one fracture in the plane y=0.5:
+
+        g = OFracGrid(domainOrigin=(0, 0, 0), domainSize=(10, 1, 10),
+                      fx=[(0, 5, 0.5, 0.5, 0, 10, 1e-4)])
+        g.getGridLineCounts()    # (3, 3, 2): x=0,5,10; y=0,0.5,1; z=0,10
+    """
 
 
     def __init__(self,
@@ -1400,9 +1445,66 @@ class OFracGrid():
         ):
         """Initialize a network
 
-        domainOrigin and domainSize, if specified, will override and filter-out
-        any fractures or gridlines passed in the other parameter lists.
+        All arguments are optional; with none, the network is empty and its
+        domain is unbounded.
 
+        Parameters
+        ----------
+        domainOrigin : 3 numbers or str, optional
+            The (x, y, z) corner of the domain with the smallest coordinates.
+            A string may be any of '(x,y,z)', 'x y z' or 'x,y z'. Exactly
+            three values are required. If omitted, the origin is (0,0,0) when
+            `domainSize` is given, and otherwise unbounded. Giving an origin
+            alone puts a grid line at that point on each axis but does not
+            bound the domain's far side.
+        domainSize : 3 numbers or str, optional
+            The (|x|, |y|, |z|) extent of the domain, in the same formats as
+            `domainOrigin`. Must be >= 0. Use `decimal.Decimal('Infinity')`,
+            not `float('inf')`, for an unbounded axis. If omitted, the size is
+            taken from the extent of `fx` and `fixedgl`.
+        fx : iterable of 7-sequences, optional
+            Fractures, each `(xfrom, xto, yfrom, yto, zfrom, zto, aperture)`.
+            Exactly one axis must have zero thickness (from == to), which
+            makes the fracture a plane perpendicular to that axis; the other
+            two need from < to. The values may be ints, floats or Decimals
+            (strings and numpy arrays are not accepted; use
+            `[tuple(r) for r in arr]` for the latter). Any iterable is fine,
+            including a generator.
+        nudgeTo : float, optional
+            Not implemented. Any value > 0 raises `NotImplementedError`; nudge
+            an existing network instead.
+        gl : 3 lists of numbers, optional
+            Grid lines as `[xlines, ylines, zlines]`. If given, they are used
+            as they stand: the fractures' faces are NOT added to them, so
+            every fracture plane and edge should already be among them. If
+            omitted, grid lines are generated from the fractures and the
+            domain faces.
+        fixedgl : 3 lists of numbers, optional
+            Grid lines, in the same `[xlines, ylines, zlines]` form, that are
+            always kept (for instance to refine the mesh where there are no
+            fractures) when grid lines are regenerated from the fractures.
+
+        Notes
+        -----
+        `domainOrigin` and `domainSize`, if specified, override and filter-out
+        any fractures or gridlines passed in the other parameter lists:
+        fractures are truncated to the domain, those left with no extent are
+        dropped, and grid lines outside it are discarded.
+
+        Coordinates are rounded to 0.001 and apertures to 0.000001 (see the
+        module documentation), so an aperture of 1e-8 is stored as 0.
+
+        Invalid fractures (not a plane, or with from > to) are skipped with a
+        message on stderr, rather than raising, while the module setting
+        `__BAD_FRACTURE_POLICY__` is its default of 'warn'. Set it to 'ignore'
+        to skip them silently, or to anything else to abort.
+
+        Raises
+        ------
+        ValueError
+            A negative domain size.
+        NotImplementedError
+            `nudgeTo` greater than zero.
         """
 
         self._fx = OFracArray(self)
@@ -1700,7 +1802,7 @@ class OFracGrid():
                         message = "User-specified gridline at {}={} is being removed!".format('xyz'[a],_i2co(gl))
                         print(message, file=sys.stderr)
             if __VERBOSITY__ and len(glsToRemove)>0:
-                print("Removed {} user-specifed gridlines in {}".format(len(glsToRemove),'xyz'[a]), file=sys.stderr)
+                print("Removed {} user-specified gridlines in {}".format(len(glsToRemove),'xyz'[a]), file=sys.stderr)
 
             self._fixedgl[a] -= glsToRemove
 

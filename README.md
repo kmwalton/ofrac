@@ -36,6 +36,44 @@ RFGen-type orthogonal fracture networks.
 Install `hgstools` from source, and make sure `regex` is installed alongside
 it, to read RFGen, FRACTRAN and HGS+RFGen networks.
 
+## Creating a network in Python
+
+The package's `__init__.py` is empty, so import from `ofrac.ofracs`. There are
+three ways to get an `OFracGrid`:
+
+```python
+from ofrac.ofracs import OFracGrid, parse
+
+# 1. from fractures and/or a domain
+g = OFracGrid(domainOrigin=(0, 0, 0), domainSize=(10, 1, 10),
+              fx=[(0, 5, 0.5, 0.5, 0, 10, 1e-4)])
+
+# 2. from a file; every available parser is tried in turn
+g = parse('fracs.rfd')
+
+# 3. from a pickle written earlier
+OFracGrid.pickleTo(g, 'net.pkl')
+g = OFracGrid.unpickleFrom('net.pkl')
+```
+
+Valid arguments to `OFracGrid(...)`:
+
+| argument | format | notes |
+| --- | --- | --- |
+| `domainOrigin` | 3 numbers, or a string like `'0 0 0'` or `'(0,0,0)'` | exactly three values; defaults to `(0,0,0)` if only `domainSize` is given |
+| `domainSize` | same as `domainOrigin` | each value >= 0; use `Decimal('Infinity')`, not `float('inf')`, for unbounded |
+| `fx` | iterable of `(xfrom, xto, yfrom, yto, zfrom, zto, aperture)` | one axis must have from == to; numbers only (no strings, no numpy array -- convert rows to tuples) |
+| `gl` | `[xlines, ylines, zlines]` | used as given; fracture faces are *not* added to them |
+| `fixedgl` | `[xlines, ylines, zlines]` | always kept when grid lines are regenerated |
+| `nudgeTo` | -- | not implemented; any value > 0 raises `NotImplementedError` |
+
+If a domain is given, fractures and grid lines outside it are truncated or
+dropped. Coordinates are rounded to 0.001 and apertures to 0.000001, so an
+aperture of `1e-8` becomes 0. Invalid fractures are skipped with a message on
+stderr rather than raising. The same details are in the `OFracGrid` docstring.
+
+Reading RFGen, FRACTRAN or HGS files needs `hgstools`; see above.
+
 ## The tools
 
 Installing puts nine commands on the PATH:
